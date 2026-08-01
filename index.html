@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>RMS TITANIC — Iceberg Run</title>
+<title>RMS TITANIC — Iceberg Run (3D)</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;700;900&family=Space+Mono:wght@400;700&display=swap');
 
@@ -28,30 +28,21 @@
     touch-action:none;
   }
 
-  #stage{
-    position:relative;
-    width:100vw; height:100vh;
-    display:flex; flex-direction:column; align-items:center; justify-content:center;
-    gap:14px;
-  }
+  #stage{ position:fixed; inset:0; }
 
-  #game{
-    display:block;
-    background:linear-gradient(180deg,var(--navy-deep) 0%, var(--navy) 55%, var(--navy-mid) 100%);
-    box-shadow: 0 0 0 1px rgba(174,227,232,0.12), 0 30px 80px rgba(0,0,0,0.6);
-  }
+  canvas#game{ display:block; width:100%; height:100%; }
 
+  /* helm sits over the lower edge of the 3D view */
   #wheelWrap{
-    position:relative;
+    position:absolute; left:50%; bottom:26px; transform:translateX(-50%);
     touch-action:none;
     cursor:grab;
     user-select:none;
-    flex-shrink:0;
+    z-index:6;
+    filter: drop-shadow(0 10px 24px rgba(0,0,0,0.65));
   }
   #wheelWrap:active{ cursor:grabbing; }
-  #wheelCanvas{
-    display:block;
-  }
+  #wheelCanvas{ display:block; }
   .wheel-hint{
     position:absolute; left:50%; bottom:-18px; transform:translateX(-50%);
     font-size:9px; letter-spacing:0.18em; text-transform:uppercase; color:var(--ice);
@@ -71,6 +62,7 @@
   .hud .label{opacity:0.55; font-size:10px; display:block; margin-bottom:2px;}
   .hud .value{font-size:20px; color:var(--ice-bright); font-weight:700; letter-spacing:0.04em;}
   .hud .block{text-align:left;}
+  .hud .block.center{text-align:center;}
   .hud .block.right{text-align:right;}
 
   .overlay{
@@ -111,7 +103,7 @@
   }
   .howto{
     font-size:12px; line-height:1.9; color:var(--moon);
-    opacity:0.75; margin-bottom:30px; max-width:340px;
+    opacity:0.75; margin-bottom:30px; max-width:360px;
   }
   .howto b{color:var(--ice-bright); font-weight:700;}
 
@@ -131,15 +123,18 @@
   button.go:hover{ background:var(--ice); color:var(--navy-deep); }
   button.go:active{ transform:scale(0.97); }
 
-  .stat-row{
-    display:flex; gap:36px; margin-top:34px;
-  }
+  .stat-row{ display:flex; gap:36px; margin-top:34px; }
   .stat{ text-align:center; }
   .stat .n{ font-size:26px; font-weight:700; color:var(--ice-bright); font-family:'Playfair Display', serif;}
   .stat .l{ font-size:9px; letter-spacing:0.2em; opacity:0.55; text-transform:uppercase; margin-top:4px;}
 
-  .flash{
-    color:var(--danger) !important;
+  .flash{ color:var(--danger) !important; }
+
+  /* red vignette pulse when a berg is dead ahead */
+  #alertVignette{
+    position:absolute; inset:0; z-index:4; pointer-events:none; opacity:0;
+    background:radial-gradient(ellipse at 50% 55%, rgba(230,72,79,0) 45%, rgba(230,72,79,0.42) 100%);
+    transition:opacity 0.12s linear;
   }
 
   @media (max-width:520px){
@@ -151,6 +146,7 @@
 <body>
 <div id="stage">
   <canvas id="game"></canvas>
+  <div id="alertVignette"></div>
 
   <div id="wheelWrap">
     <canvas id="wheelCanvas"></canvas>
@@ -161,6 +157,10 @@
     <div class="block">
       <span class="label">Nautical Miles</span>
       <span class="value" id="scoreVal">0</span>
+    </div>
+    <div class="block center">
+      <span class="label">Speed</span>
+      <span class="value" id="knotsVal">0</span>
     </div>
     <div class="block right">
       <span class="label">Best</span>
@@ -174,7 +174,7 @@
     <p class="subtitle">she is unsinkable — prove it</p>
     <div class="rule"></div>
     <p class="howto">
-      Steer the liner through the North Atlantic ice field.<br>
+      From the bridge wing, astern of her four funnels, con the liner through the North Atlantic ice field.<br>
       <b>Grab the wheel</b> below and turn it, or use <b>arrow keys / A·D</b>.<br>
       Every berg dodged adds distance. One graze ends the voyage.
     </p>
@@ -198,585 +198,869 @@
 
 <script>
 (function(){
-  window.addEventListener('error', function(e){
+  function fail(msg){
     const div = document.createElement('div');
     div.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#e6484f;color:#fff;padding:10px 14px;font-family:monospace;font-size:12px;z-index:99999;white-space:pre-wrap;line-height:1.5;';
-    div.textContent = 'Game failed to load — ' + e.message + '  (line ' + e.lineno + ')';
+    div.textContent = msg;
     document.body.appendChild(div);
-  });
+  }
+  window.addEventListener('error', e => fail('Game failed to load — ' + e.message + '  (line ' + e.lineno + ')'));
+  window.addEventListener('unhandledrejection', e => fail('Game failed to load — ' + (e.reason && e.reason.message || e.reason)));
 })();
 </script>
-<script>
-(function(){
-  const canvas = document.getElementById('game');
-  const ctx = canvas.getContext('2d');
-  const stage = document.getElementById('stage');
-  const wheelWrap = document.getElementById('wheelWrap');
-  const wheelCanvas = document.getElementById('wheelCanvas');
-  const wheelCtx = wheelCanvas.getContext('2d');
-  let wheelSize = 120;
 
-  const scoreVal = document.getElementById('scoreVal');
-  const bestVal = document.getElementById('bestVal');
-  const startOverlay = document.getElementById('startOverlay');
-  const endOverlay = document.getElementById('endOverlay');
-  const startBtn = document.getElementById('startBtn');
-  const retryBtn = document.getElementById('retryBtn');
-  const finalScore = document.getElementById('finalScore');
-  const finalBest = document.getElementById('finalBest');
-  const endTitle = document.getElementById('endTitle');
-  const endSub = document.getElementById('endSub');
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
 
-  let W, H, DPR;
-  function resize(){
-    DPR = Math.min(window.devicePixelRatio || 1, 2);
-    const wheelReserve = 168; // space for wheel + hint + gap
-    const maxW = Math.min(window.innerWidth - 20, 480);
-    const maxH = Math.min(window.innerHeight - 20 - wheelReserve, 700);
-    // maintain portrait-ish ratio
-    let w = maxW, h = Math.min(maxH, w * 1.5);
-    if (h > maxH) { h = maxH; w = h / 1.5; }
-    W = Math.floor(w); H = Math.floor(h);
-    canvas.style.width = W + 'px';
-    canvas.style.height = H + 'px';
-    canvas.width = Math.floor(W * DPR);
-    canvas.height = Math.floor(H * DPR);
-    ctx.setTransform(DPR,0,0,DPR,0,0);
+<script type="module">
+import * as THREE from 'three';
 
-    wheelSize = Math.max(96, Math.min(148, W*0.4));
-    wheelWrap.style.width = wheelSize + 'px';
-    wheelWrap.style.height = wheelSize + 'px';
-    wheelCanvas.style.width = wheelSize + 'px';
-    wheelCanvas.style.height = wheelSize + 'px';
-    wheelCanvas.width = Math.floor(wheelSize * DPR);
-    wheelCanvas.height = Math.floor(wheelSize * DPR);
-    wheelCtx.setTransform(DPR,0,0,DPR,0,0);
-  }
-  window.addEventListener('resize', resize);
-  resize();
+/* ------------------------------------------------------------------ *
+ *  DOM
+ * ------------------------------------------------------------------ */
+const canvas       = document.getElementById('game');
+const wheelWrap    = document.getElementById('wheelWrap');
+const wheelCanvas  = document.getElementById('wheelCanvas');
+const wheelCtx     = wheelCanvas.getContext('2d');
+const scoreVal     = document.getElementById('scoreVal');
+const knotsVal     = document.getElementById('knotsVal');
+const bestVal      = document.getElementById('bestVal');
+const startOverlay = document.getElementById('startOverlay');
+const endOverlay   = document.getElementById('endOverlay');
+const startBtn     = document.getElementById('startBtn');
+const retryBtn     = document.getElementById('retryBtn');
+const finalScore   = document.getElementById('finalScore');
+const finalBest    = document.getElementById('finalBest');
+const endTitle     = document.getElementById('endTitle');
+const endSub       = document.getElementById('endSub');
+const vignette     = document.getElementById('alertVignette');
 
-  let best = 0;
-  try { best = parseInt(localStorage.getItem('titanicBest') || '0', 10) || 0; } catch(e) { best = 0; }
-  bestVal.textContent = best;
+/* ------------------------------------------------------------------ *
+ *  Constants
+ * ------------------------------------------------------------------ */
+const LANE_HALF   = 30;    // how far the ship may wander off the rhumb line
+const SPAWN_Z     = -430;  // bergs are born out in the fog
+const DESPAWN_Z   = 60;    // ...and retired once astern of the camera
+const FOG_DENSITY = 0.0042;
+const SKY_TOP     = new THREE.Color(0x05091a);
+const SKY_HORIZON = new THREE.Color(0x101f3a);
 
-  // ---- game state ----
-  let running = false;
-  let ship, bergs, gulls, stars, wake, particles;
-  let distance = 0;
-  let speed = 0;
-  let baseSpeed = 90; // px/sec world scroll
-  let spawnTimer = 0;
-  let spawnInterval = 1.0;
-  let elapsed = 0;
-  let shakeT = 0;
-  let lastTime = 0;
-  let keyLeft=false, keyRight=false;
-  let wheelAngle = 0;
-  const maxWheelAngle = Math.PI * 0.62; // ~112deg lock-to-lock feel
-  let wheelDragging = false;
-  let wheelGrabAngle = 0;
-  let wheelStartAngle = 0;
+/* ------------------------------------------------------------------ *
+ *  Renderer / scene / camera
+ * ------------------------------------------------------------------ */
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
 
-  function shipWidth(){ return W*0.11; }
-  function shipHeight(){ return shipWidth()*3.1; }
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x070d1e, FOG_DENSITY);
 
-  function resetGame(){
-    ship = {
-      x: W/2,
-      y: H*0.78,
-      vx: 0,
-      lean:0
-    };
-    bergs = [];
-    gulls = [];
-    wake = [];
-    particles = [];
-    distance = 0;
-    speed = baseSpeed;
-    spawnTimer = 0;
-    spawnInterval = 2.6;
-    elapsed = 0;
-    shakeT = 0;
-    stars = [];
-    for(let i=0;i<50;i++){
-      stars.push({x:Math.random()*W, y:Math.random()*H*0.5, r:Math.random()*1.3+0.3, tw:Math.random()*Math.PI*2});
-    }
-    for(let i=0;i<3;i++){
-      gulls.push(spawnGull(true));
-    }
-  }
+const camera = new THREE.PerspectiveCamera(58, 1, 0.1, 1400);
+const camShake = new THREE.Vector3();
 
-  function spawnGull(initial){
-    return {
-      x: Math.random()*W,
-      y: Math.random()*H*0.25 + 10,
-      s: 6+Math.random()*4,
-      speed: 20+Math.random()*20,
-      phase: Math.random()*Math.PI*2,
-      dir: Math.random()<0.5?-1:1
-    };
-  }
+function resize(){
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
 
-  function spawnBerg(){
-    const scale = 0.55 + Math.random()*1.15;
-    const w = W*0.14*scale;
-    const cx = Math.random()*(W + w) - w*0.5;
-    bergs.push({
-      x: cx,
-      y: -150,
-      w: w,
-      h: w*0.75,
-      scale: scale,
-      passed:false,
-      seed: Math.random()*1000,
-      wobble: Math.random()*Math.PI*2
-    });
-  }
+  wheelSize = Math.max(96, Math.min(150, Math.min(w, h) * 0.24));
+  wheelWrap.style.width  = wheelSize + 'px';
+  wheelWrap.style.height = wheelSize + 'px';
+  wheelCanvas.style.width  = wheelSize + 'px';
+  wheelCanvas.style.height = wheelSize + 'px';
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  wheelCanvas.width  = Math.floor(wheelSize * dpr);
+  wheelCanvas.height = Math.floor(wheelSize * dpr);
+  wheelCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
 
-  // ---- input ----
-  window.addEventListener('keydown', (e)=>{
-    if(e.key==='ArrowLeft' || e.key==='a' || e.key==='A') keyLeft=true;
-    if(e.key==='ArrowRight' || e.key==='d' || e.key==='D') keyRight=true;
-    if((e.key===' ' || e.key==='Enter') && !running){
-      if(!endOverlay.classList.contains('hidden')) doStart();
-      else if(!startOverlay.classList.contains('hidden')) doStart();
-    }
+/* ------------------------------------------------------------------ *
+ *  Lighting — moonless night: starlight ambience, one cold key light,
+ *  and the ship's own lamps doing the close-range work.
+ * ------------------------------------------------------------------ */
+scene.add(new THREE.HemisphereLight(0x2b4c7a, 0x03060f, 0.55));
+
+const keyLight = new THREE.DirectionalLight(0x9fc4e8, 0.5);
+keyLight.position.set(-40, 60, -30);
+scene.add(keyLight);
+
+const bowLamp = new THREE.PointLight(0xffd9a0, 22, 90, 2);
+bowLamp.position.set(0, 5, -14);
+scene.add(bowLamp);
+
+const deckLamp = new THREE.PointLight(0xfff0d0, 10, 45, 2);
+deckLamp.position.set(0, 8, 4);
+scene.add(deckLamp);
+
+/* ------------------------------------------------------------------ *
+ *  Sky dome + stars
+ * ------------------------------------------------------------------ */
+{
+  const skyGeo = new THREE.SphereGeometry(900, 32, 20);
+  const skyMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite:false, fog:false,
+    uniforms:{ uTop:{value:SKY_TOP}, uHorizon:{value:SKY_HORIZON} },
+    vertexShader:`
+      varying float vY;
+      void main(){
+        vY = normalize(position).y;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+      }`,
+    fragmentShader:`
+      uniform vec3 uTop; uniform vec3 uHorizon;
+      varying float vY;
+      void main(){
+        float t = clamp(vY*1.6 + 0.15, 0.0, 1.0);
+        gl_FragColor = vec4(mix(uHorizon, uTop, pow(t, 0.75)), 1.0);
+      }`
   });
-  window.addEventListener('keyup', (e)=>{
-    if(e.key==='ArrowLeft' || e.key==='a' || e.key==='A') keyLeft=false;
-    if(e.key==='ArrowRight' || e.key==='d' || e.key==='D') keyRight=false;
+  scene.add(new THREE.Mesh(skyGeo, skyMat));
+}
+
+const stars = (() => {
+  const N = 1400, pos = new Float32Array(N*3), siz = new Float32Array(N), pha = new Float32Array(N);
+  for(let i=0;i<N;i++){
+    // upper hemisphere only, biased away from the horizon haze
+    const u = Math.random()*Math.PI*2;
+    const v = Math.pow(Math.random(), 0.6) * (Math.PI*0.46);
+    const r = 820;
+    pos[i*3+0] = Math.cos(u) * Math.sin(v) * r;
+    pos[i*3+1] = Math.cos(v) * r * 0.9 + 20;
+    pos[i*3+2] = Math.sin(u) * Math.sin(v) * r;
+    siz[i] = 1.2 + Math.random()*2.6;
+    pha[i] = Math.random()*Math.PI*2;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  g.setAttribute('aSize',    new THREE.BufferAttribute(siz,1));
+  g.setAttribute('aPhase',   new THREE.BufferAttribute(pha,1));
+  const m = new THREE.ShaderMaterial({
+    transparent:true, depthWrite:false, fog:false, blending:THREE.AdditiveBlending,
+    uniforms:{ uTime:{value:0} },
+    vertexShader:`
+      attribute float aSize; attribute float aPhase;
+      uniform float uTime; varying float vA;
+      void main(){
+        vA = 0.45 + 0.45*sin(uTime*1.4 + aPhase);
+        vec4 mv = modelViewMatrix * vec4(position,1.0);
+        gl_PointSize = aSize;
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader:`
+      varying float vA;
+      void main(){
+        vec2 d = gl_PointCoord - 0.5;
+        float a = smoothstep(0.5, 0.0, length(d)) * vA;
+        gl_FragColor = vec4(vec3(0.80,0.86,0.96), a);
+      }`
   });
-
-  function angleFromWheelCenter(clientX, clientY){
-    const rect = wheelWrap.getBoundingClientRect();
-    const cx = rect.left + rect.width/2, cy = rect.top + rect.height/2;
-    return Math.atan2(clientY - cy, clientX - cx);
-  }
-
-  wheelWrap.addEventListener('pointerdown', (e)=>{
-    wheelDragging = true;
-    try{ wheelWrap.setPointerCapture(e.pointerId); }catch(err){}
-    wheelGrabAngle = angleFromWheelCenter(e.clientX, e.clientY);
-    wheelStartAngle = wheelAngle;
-  });
-  window.addEventListener('pointermove', (e)=>{
-    if(!wheelDragging) return;
-    const a = angleFromWheelCenter(e.clientX, e.clientY);
-    let delta = a - wheelGrabAngle;
-    while(delta > Math.PI) delta -= Math.PI*2;
-    while(delta < -Math.PI) delta += Math.PI*2;
-    wheelAngle = Math.max(-maxWheelAngle, Math.min(maxWheelAngle, wheelStartAngle + delta));
-  });
-  window.addEventListener('pointerup', ()=>{ wheelDragging = false; });
-  window.addEventListener('pointercancel', ()=>{ wheelDragging = false; });
-
-  function updateWheel(dt){
-    if(!wheelDragging){
-      if(keyLeft && !keyRight){
-        wheelAngle -= dt*3.4;
-      } else if(keyRight && !keyLeft){
-        wheelAngle += dt*3.4;
-      } else {
-        wheelAngle += (0 - wheelAngle) * Math.min(1, dt*4.5);
-      }
-      wheelAngle = Math.max(-maxWheelAngle, Math.min(maxWheelAngle, wheelAngle));
-    }
-  }
-
-  function drawWheel(){
-    const s = wheelSize;
-    wheelCtx.clearRect(0,0,s,s);
-
-    wheelCtx.save();
-    wheelCtx.translate(s/2, s/2);
-    wheelCtx.rotate(wheelAngle);
-
-    const R = s*0.44;
-
-    // outer rim
-    wheelCtx.beginPath();
-    wheelCtx.arc(0,0,R,0,Math.PI*2);
-    wheelCtx.lineWidth = s*0.09;
-    const rimGrad = wheelCtx.createLinearGradient(-R,-R,R,R);
-    rimGrad.addColorStop(0,'#93602c');
-    rimGrad.addColorStop(0.5,'#d9a25a');
-    rimGrad.addColorStop(1,'#6e4520');
-    wheelCtx.strokeStyle = rimGrad;
-    wheelCtx.stroke();
-    wheelCtx.lineWidth = s*0.09*0.32;
-    wheelCtx.strokeStyle = 'rgba(0,0,0,0.25)';
-    wheelCtx.stroke();
-
-    // spokes + capstan handles
-    const spokes = 8;
-    for(let i=0;i<spokes;i++){
-      const a = (i/spokes)*Math.PI*2;
-      wheelCtx.save();
-      wheelCtx.rotate(a);
-      wheelCtx.beginPath();
-      wheelCtx.moveTo(0, -s*0.1);
-      wheelCtx.lineTo(0, -R);
-      wheelCtx.lineWidth = s*0.05;
-      wheelCtx.lineCap = 'round';
-      wheelCtx.strokeStyle = '#b5824a';
-      wheelCtx.stroke();
-      // handle knob
-      wheelCtx.beginPath();
-      wheelCtx.arc(0, -R - s*0.02, s*0.055, 0, Math.PI*2);
-      wheelCtx.fillStyle = '#2c1a0d';
-      wheelCtx.fill();
-      wheelCtx.strokeStyle = 'rgba(0,0,0,0.4)';
-      wheelCtx.lineWidth = 1;
-      wheelCtx.stroke();
-      wheelCtx.restore();
-    }
-
-    // hub
-    wheelCtx.beginPath();
-    wheelCtx.arc(0,0,s*0.13,0,Math.PI*2);
-    const hubGrad = wheelCtx.createRadialGradient(-s*0.04,-s*0.04,1,0,0,s*0.13);
-    hubGrad.addColorStop(0,'#f0cd8a');
-    hubGrad.addColorStop(1,'#a3752f');
-    wheelCtx.fillStyle = hubGrad;
-    wheelCtx.fill();
-    wheelCtx.strokeStyle = 'rgba(0,0,0,0.45)';
-    wheelCtx.lineWidth = 1.5;
-    wheelCtx.stroke();
-
-    wheelCtx.restore();
-
-    // static top reference notch (does not rotate)
-    wheelCtx.save();
-    wheelCtx.strokeStyle = 'rgba(232,238,245,0.55)';
-    wheelCtx.lineWidth = 2;
-    wheelCtx.beginPath();
-    wheelCtx.moveTo(s/2, s*0.03);
-    wheelCtx.lineTo(s/2, s*0.1);
-    wheelCtx.stroke();
-    wheelCtx.restore();
-  }
-
-  // ---- collision ----
-  function collide(){
-    const sw = shipWidth()*0.5;
-    const sh = shipHeight()*0.5;
-    const sBoxW = sw*0.55, sBoxH = sh*0.72;
-    for(const b of bergs){
-      const dx = Math.abs(ship.x - b.x);
-      const dy = Math.abs((ship.y-sh*0.15) - b.y);
-      const rx = sBoxW + b.w*0.34;
-      const ry = sBoxH + b.h*0.34;
-      if(dx < rx && dy < ry){
-        return true;
-      }
-    }
-    return false;
-  }
-
-  // ---- update ----
-  function update(dt){
-    elapsed += dt;
-    // difficulty ramp
-    speed = baseSpeed + Math.min(elapsed*3.2, 130);
-    spawnInterval = Math.max(1.4, 2.6 - elapsed*0.012);
-
-    // steering — driven by the wheel's rudder angle
-    const maxV = W*0.95;
-    const targetVX = (wheelAngle/maxWheelAngle) * maxV;
-    ship.vx += (targetVX - ship.vx) * Math.min(1, dt*4.5);
-    ship.x += ship.vx*dt;
-    const margin = shipWidth()*0.42;
-    if(ship.x < margin){ ship.x = margin; ship.vx=0; }
-    if(ship.x > W-margin){ ship.x = W-margin; ship.vx=0; }
-    ship.lean += ((wheelAngle/maxWheelAngle)*0.3 - ship.lean)*Math.min(1,dt*5);
-
-    // wake trail
-    wake.push({x:ship.x, y:ship.y+shipHeight()*0.42, life:1, w: shipWidth()*0.5});
-    for(const w of wake){ w.life -= dt*0.55; w.y += speed*dt*0.9; }
-    wake = wake.filter(w=>w.life>0);
-
-    // bergs
-    spawnTimer += dt;
-    if(spawnTimer >= spawnInterval){
-      spawnTimer = 0;
-      spawnBerg();
-    }
-    for(const b of bergs){
-      b.y += speed*dt*(0.85+ (b.scale*0.15));
-      b.wobble += dt;
-      if(!b.passed && b.y > ship.y+shipHeight()*0.5){
-        b.passed = true;
-        distance += 1;
-      }
-    }
-    bergs = bergs.filter(b=> b.y < H+120);
-
-    for(const g of gulls){
-      g.x += Math.sin(elapsed*0.6+g.phase)*g.speed*dt*0.6 + g.dir*8*dt;
-      g.y += Math.cos(elapsed*0.5+g.phase)*3*dt;
-      if(g.x<-20) g.x = W+20;
-      if(g.x>W+20) g.x = -20;
-    }
-
-    if(shakeT>0) shakeT -= dt;
-
-    distance += speed*dt*0.02;
-
-    if(collide()){
-      triggerEnd();
-    }
-  }
-
-  function triggerEnd(){
-    running = false;
-    shakeT = 0.5;
-    // splash particles
-    for(let i=0;i<40;i++){
-      particles.push({
-        x: ship.x, y: ship.y,
-        vx: (Math.random()-0.5)*260,
-        vy: (Math.random()-0.9)*220,
-        life: 1,
-        r: 2+Math.random()*3
-      });
-    }
-    const finalMiles = Math.floor(distance);
-    if(finalMiles > best){
-      best = finalMiles;
-      try{ localStorage.setItem('titanicBest', String(best)); }catch(e){}
-    }
-    setTimeout(()=>{
-      finalScore.textContent = finalMiles;
-      finalBest.textContent = best;
-      bestVal.textContent = best;
-      const near = finalMiles < 8;
-      endTitle.textContent = near ? "She never left the dock." : "She has struck.";
-      endSub.textContent = near ? "A shorter voyage than most." : "The unsinkable ship meets the ice, at "+finalMiles+" miles.";
-      endOverlay.classList.remove('hidden');
-    }, 550);
-  }
-
-  // ---- draw ----
-  function drawShip(){
-    const sw = shipWidth(), sh = shipHeight();
-    ctx.save();
-    ctx.translate(ship.x, ship.y);
-    ctx.rotate(ship.lean*0.5);
-
-    // hull shadow
-    ctx.save();
-    ctx.globalAlpha = 0.35;
-    ctx.fillStyle = '#000814';
-    ctx.beginPath();
-    ctx.ellipse(0, sh*0.42, sw*0.55, sw*0.22, 0, 0, Math.PI*2);
-    ctx.fill();
-    ctx.restore();
-
-    // hull (top-down elongated shape)
-    ctx.beginPath();
-    ctx.moveTo(0, -sh*0.5);
-    ctx.bezierCurveTo(sw*0.42, -sh*0.4, sw*0.46, sh*0.1, sw*0.34, sh*0.34);
-    ctx.bezierCurveTo(sw*0.26, sh*0.48, -sw*0.26, sh*0.48, -sw*0.34, sh*0.34);
-    ctx.bezierCurveTo(-sw*0.46, sh*0.1, -sw*0.42, -sh*0.4, 0, -sh*0.5);
-    ctx.closePath();
-    const hullGrad = ctx.createLinearGradient(-sw*0.4,0,sw*0.4,0);
-    hullGrad.addColorStop(0,'#0a1730');
-    hullGrad.addColorStop(0.5,'#1b3153');
-    hullGrad.addColorStop(1,'#0a1730');
-    ctx.fillStyle = hullGrad;
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(200,220,235,0.35)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    // deck centerline
-    ctx.strokeStyle = 'rgba(200,220,235,0.18)';
-    ctx.beginPath();
-    ctx.moveTo(0,-sh*0.46); ctx.lineTo(0, sh*0.42);
-    ctx.stroke();
-
-    // funnels
-    ctx.fillStyle = '#c9645a';
-    const funnelY = [-sh*0.24, -sh*0.06, sh*0.12, sh*0.30];
-    for(const fy of funnelY){
-      ctx.beginPath();
-      ctx.roundRect ? ctx.roundRect(-sw*0.065, fy-sh*0.05, sw*0.13, sh*0.1, 2) : ctx.rect(-sw*0.065, fy-sh*0.05, sw*0.13, sh*0.1);
-      ctx.fill();
-      ctx.fillStyle = '#1a1a1a';
-      ctx.fillRect(-sw*0.065, fy-sh*0.05, sw*0.13, sh*0.018);
-      ctx.fillStyle = '#c9645a';
-    }
-
-    // bow highlight
-    ctx.fillStyle = 'rgba(230,240,248,0.5)';
-    ctx.beginPath();
-    ctx.ellipse(0,-sh*0.4, sw*0.05, sh*0.06,0,0,Math.PI*2);
-    ctx.fill();
-
-    ctx.restore();
-  }
-
-  function drawWarningArrow(x, alpha){
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.translate(x, 22);
-    ctx.shadowColor = '#e6484f';
-    ctx.shadowBlur = 10;
-    ctx.fillStyle = '#e6484f';
-    ctx.beginPath();
-    ctx.moveTo(-10,-7);
-    ctx.lineTo(0,7);
-    ctx.lineTo(10,-7);
-    ctx.lineTo(0,-1.5);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
-  }
-
-  function drawBerg(b){
-    ctx.save();
-    ctx.translate(b.x, b.y);
-    const wob = Math.sin(b.wobble*1.2+b.seed)*2;
-    ctx.rotate(wob*0.01);
-
-    // shadow in water
-    ctx.save();
-    ctx.globalAlpha = 0.14;
-    ctx.fillStyle = '#001019';
-    ctx.beginPath();
-    ctx.ellipse(0, b.h*0.32, b.w*0.5, b.h*0.16, 0,0,Math.PI*2);
-    ctx.fill();
-    ctx.restore();
-
-    const pts = [
-      [0,-b.h*0.5],[b.w*0.32,-b.h*0.28],[b.w*0.46,b.h*0.05],
-      [b.w*0.26,b.h*0.34],[-b.w*0.12,b.h*0.42],[-b.w*0.42,b.h*0.12],
-      [-b.w*0.36,-b.h*0.22]
-    ];
-    ctx.beginPath();
-    ctx.moveTo(pts[0][0],pts[0][1]);
-    for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0],pts[i][1]);
-    ctx.closePath();
-    const g = ctx.createLinearGradient(-b.w*0.4,-b.h*0.4,b.w*0.4,b.h*0.4);
-    g.addColorStop(0,'#6c828c');
-    g.addColorStop(0.45,'#4a5e68');
-    g.addColorStop(1,'#26343c');
-    ctx.fillStyle = g;
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(90,130,140,0.35)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    // facets
-    ctx.strokeStyle = 'rgba(200,215,220,0.18)';
-    ctx.beginPath();
-    ctx.moveTo(0,-b.h*0.5); ctx.lineTo(b.w*0.06,b.h*0.2);
-    ctx.moveTo(-b.w*0.36,-b.h*0.22); ctx.lineTo(b.w*0.06,b.h*0.2);
-    ctx.stroke();
-
-    ctx.restore();
-  }
-
-  function drawGull(g){
-    ctx.save();
-    ctx.translate(g.x,g.y);
-    ctx.strokeStyle = 'rgba(220,230,240,0.55)';
-    ctx.lineWidth = 1.3;
-    const s = g.s;
-    ctx.beginPath();
-    ctx.moveTo(-s,0); ctx.quadraticCurveTo(-s*0.3,-s*0.6,0,0);
-    ctx.quadraticCurveTo(s*0.3,-s*0.6,s,0);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  function render(){
-    ctx.clearRect(0,0,W,H);
-
-    // moonless night — only faint starlight, no moon glow or reflection
-    for(const s of stars){
-      const a = 0.25+0.25*Math.sin(elapsed*1.5+s.tw);
-      ctx.fillStyle = `rgba(200,210,222,${a})`;
-      ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.fill();
-    }
-
-    for(const g of gulls) drawGull(g);
-
-    // wake
-    for(const w of wake){
-      ctx.globalAlpha = Math.max(0,w.life)*0.35;
-      ctx.fillStyle = '#dfeef2';
-      ctx.beginPath();
-      ctx.ellipse(w.x, w.y, w.w*(1-w.life)*0.9+4, 3, 0,0,Math.PI*2);
-      ctx.fill();
-    }
-    ctx.globalAlpha = 1;
-
-    for(const b of bergs){
-      if(b.y < 30){
-        const fadeIn = Math.min(1, (b.y + 150) / 60);
-        const fadeOut = b.y > -20 ? Math.max(0, 1 - (b.y + 20) / 50) : 1;
-        const pulse = 0.65 + 0.35*Math.sin(elapsed*9 + b.seed);
-        const alpha = Math.max(0, Math.min(fadeIn, fadeOut)) * pulse;
-        if(alpha > 0.02) drawWarningArrow(b.x, alpha);
-      }
-    }
-    for(const b of bergs) drawBerg(b);
-
-    if(running || shakeT>0) drawShip();
-
-    // splash particles
-    for(const p of particles){
-      ctx.globalAlpha = Math.max(0,p.life);
-      ctx.fillStyle = '#eaf6f8';
-      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
-    }
-    ctx.globalAlpha = 1;
-  }
-
-  function updateParticles(dt){
-    for(const p of particles){
-      p.x += p.vx*dt; p.y += p.vy*dt;
-      p.vy += 400*dt;
-      p.life -= dt*1.1;
-    }
-    particles = particles.filter(p=>p.life>0);
-  }
-
-  function loop(ts){
-    if(!lastTime) lastTime = ts;
-    let dt = (ts-lastTime)/1000;
-    dt = Math.min(dt, 0.033);
-    lastTime = ts;
-
-    updateWheel(dt);
-    if(running){
-      update(dt);
-    }
-    updateParticles(dt);
-    render();
-    drawWheel();
-
-    scoreVal.textContent = Math.floor(distance);
-
-    requestAnimationFrame(loop);
-  }
-
-  function doStart(){
-    resetGame();
-    running = true;
-    startOverlay.classList.add('hidden');
-    endOverlay.classList.add('hidden');
-  }
-
-  startBtn.addEventListener('click', doStart);
-  retryBtn.addEventListener('click', doStart);
-
-  // initial idle scene
-  resetGame();
-  running = false;
-  requestAnimationFrame(loop);
+  const p = new THREE.Points(g, m);
+  scene.add(p);
+  return p;
 })();
+
+/* ------------------------------------------------------------------ *
+ *  Ocean
+ *
+ *  The wave field is evaluated twice — once on the GPU for the mesh and
+ *  once on the CPU (waveH) for the ship's bob. The two implementations
+ *  MUST stay term-for-term identical or the hull will swim through the
+ *  surface.
+ * ------------------------------------------------------------------ */
+const WAVE_GLSL = `
+  float waveH(vec2 p, float t){
+    return 0.55*sin(p.x*0.090 + t*1.15)
+         + 0.42*sin(p.y*0.120 - t*1.70)
+         + 0.30*sin((p.x*0.055 + p.y*0.075) + t*0.85)
+         + 0.18*sin(p.x*0.210 - p.y*0.160 + t*2.30);
+  }`;
+
+function waveH(x, z, t){
+  return 0.55*Math.sin(x*0.090 + t*1.15)
+       + 0.42*Math.sin(z*0.120 - t*1.70)
+       + 0.30*Math.sin((x*0.055 + z*0.075) + t*0.85)
+       + 0.18*Math.sin(x*0.210 - z*0.160 + t*2.30);
+}
+
+const oceanUniforms = {
+  uTime:    { value: 0 },
+  uScroll:  { value: 0 },
+  uDeep:    { value: new THREE.Color(0x040a17) },
+  uShallow: { value: new THREE.Color(0x14304f) },
+  uFogCol:  { value: new THREE.Color(0x070d1e) },
+  uFogDen:  { value: FOG_DENSITY }
+};
+
+const ocean = (() => {
+  const g = new THREE.PlaneGeometry(1100, 1100, 260, 260);
+  g.rotateX(-Math.PI/2);
+  const m = new THREE.ShaderMaterial({
+    uniforms: oceanUniforms,
+    vertexShader: WAVE_GLSL + `
+      uniform float uTime; uniform float uScroll;
+      varying vec3 vWorld; varying vec3 vNormal; varying float vH;
+      void main(){
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vec2 q  = vec2(wp.x, wp.z - uScroll);   // minus: swell travels aft, toward the camera
+        float h = waveH(q, uTime);
+        wp.y += h;
+
+        // analytic-ish normal via central differences
+        float e = 1.2;
+        float hx = waveH(q + vec2(e,0.0), uTime) - waveH(q - vec2(e,0.0), uTime);
+        float hz = waveH(q + vec2(0.0,e), uTime) - waveH(q - vec2(0.0,e), uTime);
+        vNormal = normalize(vec3(-hx, 2.0*e, -hz));
+
+        vWorld = wp.xyz;
+        vH = h;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }`,
+    fragmentShader: `
+      uniform vec3 uDeep; uniform vec3 uShallow; uniform vec3 uFogCol; uniform float uFogDen;
+      varying vec3 vWorld; varying vec3 vNormal; varying float vH;
+      void main(){
+        vec3 N = normalize(vNormal);
+        vec3 V = normalize(cameraPosition - vWorld);
+        vec3 L = normalize(vec3(-0.5, 0.7, -0.4));
+
+        float crest = smoothstep(-0.8, 1.1, vH);
+        vec3 base = mix(uDeep, uShallow, crest);
+
+        float diff = max(dot(N, L), 0.0);
+        float spec = pow(max(dot(reflect(-L, N), V), 0.0), 42.0);
+        float fres = pow(1.0 - max(dot(N, V), 0.0), 4.0);
+
+        vec3 col = base
+                 + vec3(0.10,0.16,0.24) * diff
+                 + vec3(0.55,0.68,0.80) * spec * 0.55
+                 + vec3(0.10,0.20,0.32) * fres;
+
+        // match scene.fog (FogExp2) by hand — this material opts out of three's fog chunks
+        float d = length(cameraPosition - vWorld);
+        float f = 1.0 - exp(-pow(uFogDen * d, 2.0));
+        gl_FragColor = vec4(mix(col, uFogCol, clamp(f, 0.0, 1.0)), 1.0);
+      }`
+  });
+  const mesh = new THREE.Mesh(g, m);
+  mesh.position.set(0, 0, -420);   // pushed ahead so the field reaches the fog wall
+  scene.add(mesh);
+  return mesh;
+})();
+
+/* ------------------------------------------------------------------ *
+ *  Ship — a stylised RMS Titanic, seen from astern
+ * ------------------------------------------------------------------ */
+const ship = new THREE.Group();
+const shipRig = new THREE.Group();   // holds pitch/roll so ship.rotation stays clean
+shipRig.add(ship);
+scene.add(shipRig);
+
+const SHIP_LEN  = 30;
+const SHIP_BEAM = 5.4;
+
+{
+  const black = new THREE.MeshStandardMaterial({ color:0x0a1020, roughness:0.55, metalness:0.25 });
+  const white = new THREE.MeshStandardMaterial({ color:0xd9e2ea, roughness:0.7 });
+  const buff  = new THREE.MeshStandardMaterial({ color:0xc9744f, roughness:0.75 });
+  const soot  = new THREE.MeshStandardMaterial({ color:0x14161a, roughness:0.9 });
+  const teak  = new THREE.MeshStandardMaterial({ color:0x6b4a2c, roughness:0.85 });
+  const gold  = new THREE.MeshStandardMaterial({ color:0xc9a15a, roughness:0.35, metalness:0.8, emissive:0x2a1e08 });
+
+  // --- hull: top-down outline, extruded downward ---
+  const half = SHIP_BEAM/2, L = SHIP_LEN/2;
+  const s = new THREE.Shape();
+  s.moveTo(0, L);                                       // stem
+  s.bezierCurveTo( half*0.85,  L*0.86,  half, L*0.25,  half, -L*0.35);
+  s.bezierCurveTo( half*0.98, -L*0.78,  half*0.55, -L, 0,    -L);      // counter stern
+  s.bezierCurveTo(-half*0.55, -L, -half*0.98, -L*0.78, -half, -L*0.35);
+  s.bezierCurveTo(-half, L*0.25, -half*0.85, L*0.86, 0, L);
+
+  const hullGeo = new THREE.ExtrudeGeometry(s, {
+    depth: 3.1, bevelEnabled:true, bevelSize:0.55, bevelThickness:0.75, bevelSegments:3, curveSegments:24
+  });
+  hullGeo.rotateX(-Math.PI/2);           // shape's +Y (stem) becomes -Z, so the bow leads
+  hullGeo.translate(0, -1.55, 0);        // sink half the extrusion below the deck line at y=0
+  const hull = new THREE.Mesh(hullGeo, black);
+  ship.add(hull);
+
+  // waterline stripe + boot topping
+  const stripeGeo = new THREE.ExtrudeGeometry(s, { depth:0.34, bevelEnabled:false, curveSegments:24 });
+  stripeGeo.rotateX(-Math.PI/2);
+  stripeGeo.translate(0, -0.28, 0);
+  stripeGeo.scale(1.012, 1, 1.004);
+  ship.add(new THREE.Mesh(stripeGeo, new THREE.MeshStandardMaterial({ color:0x7a1f1f, roughness:0.8 })));
+
+  // --- superstructure: two tiers of white deckhouse ---
+  const house1 = new THREE.Mesh(new THREE.BoxGeometry(SHIP_BEAM*0.78, 1.5, SHIP_LEN*0.56), white);
+  house1.position.set(0, 2.35, -SHIP_LEN*0.02);
+  ship.add(house1);
+
+  const house2 = new THREE.Mesh(new THREE.BoxGeometry(SHIP_BEAM*0.60, 1.15, SHIP_LEN*0.40), white);
+  house2.position.set(0, 3.55, -SHIP_LEN*0.04);
+  ship.add(house2);
+
+  // boat deck strip + davits
+  const boatDeck = new THREE.Mesh(new THREE.BoxGeometry(SHIP_BEAM*0.66, 0.12, SHIP_LEN*0.42), teak);
+  boatDeck.position.set(0, 4.14, -SHIP_LEN*0.04);
+  ship.add(boatDeck);
+
+  const boatGeo = new THREE.CapsuleGeometry(0.16, 0.7, 3, 6);
+  boatGeo.rotateZ(Math.PI/2);
+  for(let i=0;i<5;i++){
+    const z = -SHIP_LEN*0.20 + i*(SHIP_LEN*0.09);
+    for(const sx of [-1, 1]){
+      const b = new THREE.Mesh(boatGeo, white);
+      b.position.set(sx*SHIP_BEAM*0.36, 4.42, z);
+      b.rotation.y = Math.PI/2;
+      ship.add(b);
+    }
+  }
+
+  // --- bridge, right up forward, with lit windows ---
+  const bridge = new THREE.Mesh(new THREE.BoxGeometry(SHIP_BEAM*0.72, 0.9, 1.7), white);
+  bridge.position.set(0, 4.6, -SHIP_LEN*0.24);
+  ship.add(bridge);
+  const glass = new THREE.Mesh(
+    new THREE.BoxGeometry(SHIP_BEAM*0.60, 0.42, 0.08),
+    new THREE.MeshStandardMaterial({ color:0xffe3ae, emissive:0xffc46a, emissiveIntensity:1.6, roughness:0.4 })
+  );
+  glass.position.set(0, 4.66, -SHIP_LEN*0.24 - 0.86);
+  ship.add(glass);
+
+  // --- four funnels, buff with black tops ---
+  const funnelZ = [-SHIP_LEN*0.155, -SHIP_LEN*0.025, SHIP_LEN*0.105, SHIP_LEN*0.235];
+  const smokeAnchors = [];
+  funnelZ.forEach((fz, i) => {
+    const h = 4.6 - i*0.18;
+    const f = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.72, h, 20, 1, true), buff);
+    f.position.set(0, 4.2 + h/2, fz);
+    f.rotation.x = -0.045;               // funnels rake aft, as she did
+    ship.add(f);
+
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.63, 0.63, h*0.20, 20), soot);
+    cap.position.set(0, 4.2 + h - h*0.10, fz);
+    ship.add(cap);
+
+    // 4th funnel was a dummy — no smoke from it
+    if(i < 3) smokeAnchors.push(new THREE.Vector3(0, 4.2 + h + 0.3, fz));
+  });
+  ship.userData.smokeAnchors = smokeAnchors;
+
+  // --- masts ---
+  for(const mz of [-SHIP_LEN*0.36, SHIP_LEN*0.34]){
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.13, 7.5, 8), teak);
+    mast.position.set(0, 5.3, mz);
+    ship.add(mast);
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 8), gold);
+    lamp.position.set(0, 9.1, mz);
+    ship.add(lamp);
+  }
+
+  // --- bow lantern glow ---
+  const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 10),
+    new THREE.MeshStandardMaterial({ color:0xffd9a0, emissive:0xffb257, emissiveIntensity:2.4 }));
+  lantern.position.set(0, 2.0, -SHIP_LEN*0.46);
+  ship.add(lantern);
+}
+
+/* ------------------------------------------------------------------ *
+ *  Icebergs
+ * ------------------------------------------------------------------ */
+const bergMat = new THREE.MeshStandardMaterial({
+  color:0x8fa6b2, roughness:0.42, metalness:0.05, flatShading:true
+});
+const bergSubMat = new THREE.MeshStandardMaterial({
+  color:0x27414f, roughness:0.9, transparent:true, opacity:0.55, flatShading:true
+});
+
+function makeBergGeometry(seed){
+  const g = new THREE.IcosahedronGeometry(1, 1);
+  const p = g.attributes.position;
+  const v = new THREE.Vector3();
+  let n = seed;
+  const rnd = () => { n = (n*16807) % 2147483647; return n / 2147483647; };
+  for(let i=0;i<p.count;i++){
+    v.fromBufferAttribute(p, i);
+    const k = 0.55 + rnd()*0.85;
+    v.multiplyScalar(k);
+    v.y = v.y > 0 ? v.y * (1.15 + rnd()*0.7) : v.y * 0.45;   // jagged above, blunt below
+    p.setXYZ(i, v.x, v.y, v.z);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+const BERG_GEOS = Array.from({length:8}, (_,i) => makeBergGeometry(i*7919 + 13));
+
+const bergs = [];
+const bergPool = [];
+
+function acquireBerg(){
+  if(bergPool.length) return bergPool.pop();
+  const grp = new THREE.Group();
+  const top = new THREE.Mesh(BERG_GEOS[0], bergMat);
+  const sub = new THREE.Mesh(BERG_GEOS[0], bergSubMat);
+  sub.scale.set(1.35, 0.5, 1.35);
+  sub.position.y = -0.9;
+  grp.add(top, sub);
+  grp.userData.top = top;
+  grp.userData.sub = sub;
+  scene.add(grp);
+  return grp;
+}
+
+function spawnBerg(){
+  const g = acquireBerg();
+  const r = 3.2 + Math.random()*7.5;
+  const geo = BERG_GEOS[(Math.random()*BERG_GEOS.length)|0];
+  g.userData.top.geometry = geo;
+  g.userData.sub.geometry = geo;
+  g.scale.setScalar(r);
+  g.position.set((Math.random()*2 - 1) * (LANE_HALF + 6), 0, SPAWN_Z - Math.random()*70);
+  g.rotation.set(0, Math.random()*Math.PI*2, 0);
+  g.visible = true;
+  g.userData.r = r;
+  g.userData.passed = false;
+  g.userData.spin = (Math.random()-0.5) * 0.12;
+  g.userData.bobPhase = Math.random()*Math.PI*2;
+  bergs.push(g);
+}
+
+function releaseBerg(g){
+  g.visible = false;
+  bergPool.push(g);
+}
+
+/* ------------------------------------------------------------------ *
+ *  Particle systems: wake foam, funnel smoke, collision spray
+ * ------------------------------------------------------------------ */
+function makePoints(count, color, size, blending){
+  const pos = new Float32Array(count*3);
+  const alp = new Float32Array(count);
+  const scl = new Float32Array(count);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  g.setAttribute('aAlpha',   new THREE.BufferAttribute(alp,1));
+  g.setAttribute('aScale',   new THREE.BufferAttribute(scl,1));
+  const m = new THREE.ShaderMaterial({
+    transparent:true, depthWrite:false, blending,
+    uniforms:{ uColor:{value:new THREE.Color(color)}, uSize:{value:size} },
+    vertexShader:`
+      attribute float aAlpha; attribute float aScale;
+      uniform float uSize; varying float vA;
+      void main(){
+        vA = aAlpha;
+        vec4 mv = modelViewMatrix * vec4(position,1.0);
+        gl_PointSize = uSize * aScale * (300.0 / max(-mv.z, 1.0));
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader:`
+      uniform vec3 uColor; varying float vA;
+      void main(){
+        float d = length(gl_PointCoord - 0.5);
+        float a = smoothstep(0.5, 0.05, d) * vA;
+        if(a < 0.01) discard;
+        gl_FragColor = vec4(uColor, a);
+      }`
+  });
+  const pts = new THREE.Points(g, m);
+  pts.frustumCulled = false;
+  scene.add(pts);
+  return { pts, pos, alp, scl, count, cursor:0, data:Array.from({length:count}, () => ({life:0, vx:0, vy:0, vz:0})) };
+}
+
+const wakeFX  = makePoints(900, 0xdfeef2, 5.5, THREE.NormalBlending);
+const smokeFX = makePoints(500, 0x1d2733, 9.0, THREE.NormalBlending);
+const sprayFX = makePoints(400, 0xeaf6f8, 7.0, THREE.AdditiveBlending);
+
+function emit(fx, x, y, z, vx, vy, vz, scale){
+  const i = fx.cursor; fx.cursor = (i+1) % fx.count;
+  fx.pos[i*3+0]=x; fx.pos[i*3+1]=y; fx.pos[i*3+2]=z;
+  fx.alp[i]=1; fx.scl[i]=scale;
+  const d = fx.data[i]; d.life=1; d.vx=vx; d.vy=vy; d.vz=vz;
+}
+
+function stepPoints(fx, dt, gravity, drag, fade){
+  for(let i=0;i<fx.count;i++){
+    const d = fx.data[i];
+    if(d.life <= 0) { if(fx.alp[i] !== 0) fx.alp[i] = 0; continue; }
+    d.life -= dt*fade;
+    d.vy += gravity*dt;
+    d.vx *= (1 - drag*dt); d.vz *= (1 - drag*dt);
+    fx.pos[i*3+0] += d.vx*dt;
+    fx.pos[i*3+1] += d.vy*dt;
+    fx.pos[i*3+2] += d.vz*dt;
+    fx.alp[i] = Math.max(0, d.life);
+  }
+  fx.pts.geometry.attributes.position.needsUpdate = true;
+  fx.pts.geometry.attributes.aAlpha.needsUpdate = true;
+  fx.pts.geometry.attributes.aScale.needsUpdate = true;
+}
+
+/* ------------------------------------------------------------------ *
+ *  Ship's wheel (2D, unchanged in spirit from the original)
+ * ------------------------------------------------------------------ */
+let wheelSize = 120;
+let wheelAngle = 0;
+const MAX_WHEEL = Math.PI * 0.62;
+let wheelDragging = false, wheelGrabAngle = 0, wheelStartAngle = 0;
+let keyLeft = false, keyRight = false;
+
+function angleFromWheelCenter(clientX, clientY){
+  const r = wheelWrap.getBoundingClientRect();
+  return Math.atan2(clientY - (r.top + r.height/2), clientX - (r.left + r.width/2));
+}
+
+wheelWrap.addEventListener('pointerdown', e => {
+  wheelDragging = true;
+  try { wheelWrap.setPointerCapture(e.pointerId); } catch(_) {}
+  wheelGrabAngle = angleFromWheelCenter(e.clientX, e.clientY);
+  wheelStartAngle = wheelAngle;
+});
+window.addEventListener('pointermove', e => {
+  if(!wheelDragging) return;
+  let delta = angleFromWheelCenter(e.clientX, e.clientY) - wheelGrabAngle;
+  while(delta >  Math.PI) delta -= Math.PI*2;
+  while(delta < -Math.PI) delta += Math.PI*2;
+  wheelAngle = THREE.MathUtils.clamp(wheelStartAngle + delta, -MAX_WHEEL, MAX_WHEEL);
+});
+window.addEventListener('pointerup',     () => { wheelDragging = false; });
+window.addEventListener('pointercancel', () => { wheelDragging = false; });
+
+window.addEventListener('keydown', e => {
+  if(e.key==='ArrowLeft'  || e.key==='a' || e.key==='A') keyLeft = true;
+  if(e.key==='ArrowRight' || e.key==='d' || e.key==='D') keyRight = true;
+  if((e.key===' ' || e.key==='Enter') && !running) doStart();
+});
+window.addEventListener('keyup', e => {
+  if(e.key==='ArrowLeft'  || e.key==='a' || e.key==='A') keyLeft = false;
+  if(e.key==='ArrowRight' || e.key==='d' || e.key==='D') keyRight = false;
+});
+
+function updateWheel(dt){
+  if(wheelDragging) return;
+  if(keyLeft && !keyRight)      wheelAngle -= dt*3.4;
+  else if(keyRight && !keyLeft) wheelAngle += dt*3.4;
+  else                          wheelAngle += (0 - wheelAngle) * Math.min(1, dt*4.5);
+  wheelAngle = THREE.MathUtils.clamp(wheelAngle, -MAX_WHEEL, MAX_WHEEL);
+}
+
+function drawWheel(){
+  const s = wheelSize;
+  wheelCtx.clearRect(0,0,s,s);
+  wheelCtx.save();
+  wheelCtx.translate(s/2, s/2);
+  wheelCtx.rotate(wheelAngle);
+
+  const R = s*0.44;
+  wheelCtx.beginPath();
+  wheelCtx.arc(0,0,R,0,Math.PI*2);
+  wheelCtx.lineWidth = s*0.09;
+  const rim = wheelCtx.createLinearGradient(-R,-R,R,R);
+  rim.addColorStop(0,'#93602c'); rim.addColorStop(0.5,'#d9a25a'); rim.addColorStop(1,'#6e4520');
+  wheelCtx.strokeStyle = rim;
+  wheelCtx.stroke();
+  wheelCtx.lineWidth = s*0.09*0.32;
+  wheelCtx.strokeStyle = 'rgba(0,0,0,0.25)';
+  wheelCtx.stroke();
+
+  for(let i=0;i<8;i++){
+    wheelCtx.save();
+    wheelCtx.rotate((i/8)*Math.PI*2);
+    wheelCtx.beginPath();
+    wheelCtx.moveTo(0, -s*0.1);
+    wheelCtx.lineTo(0, -R);
+    wheelCtx.lineWidth = s*0.05;
+    wheelCtx.lineCap = 'round';
+    wheelCtx.strokeStyle = '#b5824a';
+    wheelCtx.stroke();
+    wheelCtx.beginPath();
+    wheelCtx.arc(0, -R - s*0.02, s*0.055, 0, Math.PI*2);
+    wheelCtx.fillStyle = '#2c1a0d';
+    wheelCtx.fill();
+    wheelCtx.strokeStyle = 'rgba(0,0,0,0.4)';
+    wheelCtx.lineWidth = 1;
+    wheelCtx.stroke();
+    wheelCtx.restore();
+  }
+
+  wheelCtx.beginPath();
+  wheelCtx.arc(0,0,s*0.13,0,Math.PI*2);
+  const hub = wheelCtx.createRadialGradient(-s*0.04,-s*0.04,1,0,0,s*0.13);
+  hub.addColorStop(0,'#f0cd8a'); hub.addColorStop(1,'#a3752f');
+  wheelCtx.fillStyle = hub;
+  wheelCtx.fill();
+  wheelCtx.strokeStyle = 'rgba(0,0,0,0.45)';
+  wheelCtx.lineWidth = 1.5;
+  wheelCtx.stroke();
+  wheelCtx.restore();
+
+  wheelCtx.save();
+  wheelCtx.strokeStyle = 'rgba(232,238,245,0.55)';
+  wheelCtx.lineWidth = 2;
+  wheelCtx.beginPath();
+  wheelCtx.moveTo(s/2, s*0.03);
+  wheelCtx.lineTo(s/2, s*0.1);
+  wheelCtx.stroke();
+  wheelCtx.restore();
+}
+
+/* ------------------------------------------------------------------ *
+ *  Game state
+ * ------------------------------------------------------------------ */
+let running = false;
+let best = 0;
+try { best = parseInt(localStorage.getItem('titanicBest') || '0', 10) || 0; } catch(_) { best = 0; }
+bestVal.textContent = best;
+
+const st = {
+  x:0, vx:0, lean:0, yaw:0,
+  distance:0, speed:0, elapsed:0,
+  spawnTimer:0, spawnInterval:2.6,
+  shake:0, scroll:0, smokeTimer:0, wakeTimer:0
+};
+const BASE_SPEED = 26;
+
+function resetGame(){
+  st.x = 0; st.vx = 0; st.lean = 0; st.yaw = 0;
+  st.distance = 0; st.speed = BASE_SPEED; st.elapsed = 0;
+  st.spawnTimer = 0; st.spawnInterval = 2.6;
+  st.shake = 0; st.scroll = 0; st.smokeTimer = 0; st.wakeTimer = 0;
+
+  while(bergs.length) releaseBerg(bergs.pop());
+  for(const fx of [wakeFX, smokeFX, sprayFX]){
+    for(let i=0;i<fx.count;i++){ fx.data[i].life = 0; fx.alp[i] = 0; }
+  }
+  // seed the field so the opening shot isn't empty water
+  for(let i=0;i<5;i++){ spawnBerg(); bergs[bergs.length-1].position.z = -120 - i*70; }
+}
+
+function doStart(){
+  resetGame();
+  running = true;
+  startOverlay.classList.add('hidden');
+  endOverlay.classList.add('hidden');
+}
+startBtn.addEventListener('click', doStart);
+retryBtn.addEventListener('click', doStart);
+
+function triggerEnd(){
+  running = false;
+  st.shake = 0.9;
+
+  const bow = new THREE.Vector3(st.x, 2.5, -SHIP_LEN*0.5);
+  for(let i=0;i<160;i++){
+    emit(sprayFX,
+      bow.x + (Math.random()-0.5)*6, bow.y + Math.random()*2, bow.z + (Math.random()-0.5)*6,
+      (Math.random()-0.5)*22, 6 + Math.random()*16, (Math.random()-0.5)*22,
+      0.5 + Math.random()*1.2);
+  }
+
+  const miles = Math.floor(st.distance);
+  if(miles > best){
+    best = miles;
+    try { localStorage.setItem('titanicBest', String(best)); } catch(_) {}
+  }
+  setTimeout(() => {
+    finalScore.textContent = miles;
+    finalBest.textContent = best;
+    bestVal.textContent = best;
+    const short = miles < 8;
+    endTitle.textContent = short ? 'She never left the dock.' : 'She has struck.';
+    endSub.textContent = short
+      ? 'A shorter voyage than most.'
+      : 'The unsinkable ship meets the ice, at ' + miles + ' miles.';
+    endOverlay.classList.remove('hidden');
+  }, 900);
+}
+
+/* ------------------------------------------------------------------ *
+ *  Simulation
+ * ------------------------------------------------------------------ */
+function collide(){
+  for(const b of bergs){
+    const dx = Math.abs(st.x - b.position.x);
+    const dz = Math.abs(b.position.z);                    // ship sits at z = 0
+    const rx = SHIP_BEAM*0.45 + b.userData.r*0.72;
+    const rz = SHIP_LEN*0.44  + b.userData.r*0.72;
+    if(dx < rx && dz < rz) return true;
+  }
+  return false;
+}
+
+function update(dt){
+  st.elapsed += dt;
+  st.speed = BASE_SPEED + Math.min(st.elapsed*0.95, 40);
+  st.spawnInterval = Math.max(0.62, 1.5 - st.elapsed*0.011);
+  st.scroll += st.speed * dt;
+
+  // steering: rudder angle -> lateral velocity, with yaw and heel following
+  const rudder = wheelAngle / MAX_WHEEL;
+  const targetVX = rudder * 20;
+  st.vx += (targetVX - st.vx) * Math.min(1, dt*3.0);
+  st.x  += st.vx * dt;
+  if(st.x < -LANE_HALF){ st.x = -LANE_HALF; st.vx = 0; }
+  if(st.x >  LANE_HALF){ st.x =  LANE_HALF; st.vx = 0; }
+
+  st.yaw  += ((-st.vx/20) * 0.34 - st.yaw)  * Math.min(1, dt*3.2);
+  st.lean += (( rudder    * 0.16) - st.lean) * Math.min(1, dt*2.6);
+
+  // bergs drift aft
+  st.spawnTimer += dt;
+  if(st.spawnTimer >= st.spawnInterval){ st.spawnTimer = 0; spawnBerg(); }
+
+  for(let i=bergs.length-1;i>=0;i--){
+    const b = bergs[i];
+    b.position.z += st.speed * dt;
+    b.rotation.y += b.userData.spin * dt;
+    b.position.y = waveH(b.position.x, b.position.z - st.scroll, st.elapsed) * 0.55
+                 + Math.sin(st.elapsed*0.7 + b.userData.bobPhase) * 0.12
+                 - b.userData.r*0.10;
+    b.rotation.z = Math.sin(st.elapsed*0.6 + b.userData.bobPhase) * 0.035;
+
+    if(!b.userData.passed && b.position.z > SHIP_LEN*0.5){
+      b.userData.passed = true;
+      st.distance += 1;
+    }
+    if(b.position.z > DESPAWN_Z){
+      releaseBerg(b);
+      bergs.splice(i, 1);
+    }
+  }
+
+  st.distance += st.speed * dt * 0.06;
+
+  // wake foam off the stern quarters
+  st.wakeTimer += dt;
+  while(st.wakeTimer > 0.018){
+    st.wakeTimer -= 0.018;
+    const side = Math.random() < 0.5 ? -1 : 1;
+    emit(wakeFX,
+      st.x + side*(SHIP_BEAM*0.42 + Math.random()*0.5) - st.vx*0.05,
+      0.35 + Math.random()*0.3,
+      SHIP_LEN*0.45 + Math.random()*1.4,
+      side*(1.6 + Math.random()*2.4) - st.vx*0.35,
+      0.2,
+      st.speed*0.55 + Math.random()*6,
+      0.7 + Math.random()*1.1);
+  }
+
+  // funnel smoke, trailing aft
+  st.smokeTimer += dt;
+  if(st.smokeTimer > 0.05){
+    st.smokeTimer = 0;
+    for(const a of ship.userData.smokeAnchors){
+      emit(smokeFX,
+        st.x + a.x + (Math.random()-0.5)*0.4, a.y, a.z + (Math.random()-0.5)*0.4,
+        (Math.random()-0.5)*1.2, 2.2 + Math.random()*1.6, st.speed*0.42 + Math.random()*4,
+        0.9 + Math.random()*1.3);
+    }
+  }
+
+  if(collide()) triggerEnd();
+}
+
+/* ------------------------------------------------------------------ *
+ *  Presentation
+ * ------------------------------------------------------------------ */
+function poseShip(){
+  const t = st.elapsed;
+  const zScroll = -st.scroll;   // world z -> wave-field z; mirrors `wp.z - uScroll` in the shader
+  const yMid   = waveH(st.x, zScroll, t);
+  const yBow   = waveH(st.x, -SHIP_LEN*0.45 + zScroll, t);
+  const yStern = waveH(st.x,  SHIP_LEN*0.45 + zScroll, t);
+  const yPort  = waveH(st.x - SHIP_BEAM*0.5, zScroll, t);
+  const yStbd  = waveH(st.x + SHIP_BEAM*0.5, zScroll, t);
+
+  shipRig.position.set(st.x, yMid*0.45 - 0.15, 0);
+  shipRig.rotation.set(
+    Math.atan2((yStern - yBow)*0.45, SHIP_LEN*0.9),          // pitch
+    st.yaw,
+    Math.atan2((yPort - yStbd)*0.45, SHIP_BEAM) + st.lean    // roll + heel into the turn
+  );
+
+  bowLamp.position.set(st.x, 5, -SHIP_LEN*0.42);
+  deckLamp.position.set(st.x, 8, SHIP_LEN*0.1);
+}
+
+function poseCamera(dt){
+  // chase cam: astern, above the after funnel, looking down the ship's length
+  const desired = new THREE.Vector3(
+    st.x*0.72 + st.vx*0.18,
+    11.5 + Math.sin(st.elapsed*0.8)*0.25,
+    SHIP_LEN*0.72 + 8
+  );
+  camera.position.lerp(desired, Math.min(1, dt*2.4));
+
+  if(st.shake > 0){
+    const k = st.shake*st.shake * 1.6;
+    camShake.set((Math.random()-0.5)*k, (Math.random()-0.5)*k, (Math.random()-0.5)*k*0.5);
+    camera.position.add(camShake);
+    st.shake = Math.max(0, st.shake - dt*1.1);
+  }
+
+  const look = new THREE.Vector3(st.x*0.9 + st.vx*0.5, 3.2, -SHIP_LEN*1.1);
+  camera.lookAt(look);
+  camera.rotation.z += st.lean*0.35 - st.yaw*0.12;
+}
+
+function updateAlert(){
+  // brightest when a big berg is close and near the ship's track
+  let danger = 0;
+  for(const b of bergs){
+    if(b.position.z > 0 || b.position.z < -230) continue;
+    const dx = Math.abs(st.x - b.position.x);
+    const lateral = Math.max(0, 1 - dx / (b.userData.r + SHIP_BEAM*1.4));
+    const closing = THREE.MathUtils.clamp(1 - (-b.position.z) / 230, 0, 1);
+    danger = Math.max(danger, lateral * closing);
+  }
+  const pulse = 0.6 + 0.4*Math.sin(st.elapsed*9);
+  vignette.style.opacity = (running ? danger * pulse * 0.9 : 0).toFixed(3);
+}
+
+/* ------------------------------------------------------------------ *
+ *  Main loop
+ * ------------------------------------------------------------------ */
+let last = 0;
+function loop(ts){
+  requestAnimationFrame(loop);
+  if(!last) last = ts;
+  const dt = Math.min((ts - last)/1000, 0.033);
+  last = ts;
+
+  updateWheel(dt);
+  if(running) update(dt);
+  else        st.elapsed += dt;          // sea and sky keep breathing on the menus
+
+  stepPoints(wakeFX,  dt, -0.4,  1.1, 0.85);
+  stepPoints(smokeFX, dt,  0.9,  0.5, 0.42);
+  stepPoints(sprayFX, dt, -16.0, 0.6, 1.05);
+
+  oceanUniforms.uTime.value   = st.elapsed;
+  oceanUniforms.uScroll.value = st.scroll;
+  stars.material.uniforms.uTime.value = st.elapsed;
+  stars.position.x = st.x;               // keep the sky centred on the ship
+
+  poseShip();
+  poseCamera(dt);
+  updateAlert();
+  drawWheel();
+
+  scoreVal.textContent = Math.floor(st.distance);
+  knotsVal.textContent = running ? Math.round(st.speed*0.85) : 0;
+
+  renderer.render(scene, camera);
+}
+
+window.addEventListener('resize', resize);
+resize();
+resetGame();
+running = false;
+poseShip();
+camera.position.set(0, 12, SHIP_LEN*0.72 + 8);
+requestAnimationFrame(loop);
 </script>
 </body>
 </html>
