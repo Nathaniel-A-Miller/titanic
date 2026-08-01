@@ -34,7 +34,7 @@
 
   /* helm sits over the lower edge of the 3D view */
   #wheelWrap{
-    position:absolute; left:50%; bottom:26px; transform:translateX(-50%);
+    position:absolute; left:50%; bottom:22px; transform:translateX(-50%);
     touch-action:none;
     cursor:grab;
     user-select:none;
@@ -64,6 +64,14 @@
   .hud .block{text-align:left;}
   .hud .block.center{text-align:center;}
   .hud .block.right{text-align:right;}
+
+  /* view-mode chip, bottom left */
+  #viewChip{
+    position:absolute; left:18px; bottom:24px; z-index:6;
+    font-size:9px; letter-spacing:0.2em; text-transform:uppercase;
+    color:var(--ice); opacity:0.5; pointer-events:none; line-height:1.7;
+  }
+  #viewChip b{ color:var(--ice-bright); font-weight:700; }
 
   .overlay{
     position:absolute; inset:0;
@@ -103,9 +111,14 @@
   }
   .howto{
     font-size:12px; line-height:1.9; color:var(--moon);
-    opacity:0.75; margin-bottom:30px; max-width:360px;
+    opacity:0.75; margin-bottom:30px; max-width:380px;
   }
   .howto b{color:var(--ice-bright); font-weight:700;}
+  .howto kbd{
+    font-family:'Space Mono', monospace; font-size:11px;
+    border:1px solid rgba(174,227,232,0.4); border-radius:3px;
+    padding:1px 5px; color:var(--ice-bright);
+  }
 
   button.go{
     font-family:'Space Mono', monospace;
@@ -140,6 +153,7 @@
   @media (max-width:520px){
     .hud{ font-size:11px; }
     .hud .value{ font-size:16px; }
+    #viewChip{ display:none; }
   }
 </style>
 </head>
@@ -168,15 +182,18 @@
     </div>
   </div>
 
+  <div id="viewChip"><b id="viewName">Crow's Nest</b><br>press C to change view</div>
+
   <div class="overlay" id="startOverlay">
     <div class="eyebrow">White Star Line presents</div>
     <h1>RMS TITANIC</h1>
     <p class="subtitle">she is unsinkable — prove it</p>
     <div class="rule"></div>
     <p class="howto">
-      From the bridge wing, astern of her four funnels, con the liner through the North Atlantic ice field.<br>
+      You are the lookout in the crow's nest, ninety feet up her foremast.<br>
       <b>Grab the wheel</b> below and turn it, or use <b>arrow keys / A·D</b>.<br>
-      Every berg dodged adds distance. One graze ends the voyage.
+      Every berg dodged adds distance. One graze ends the voyage.<br>
+      <span style="opacity:0.6">Press <kbd>C</kbd> for the view from astern.</span>
     </p>
     <button class="go" id="startBtn">Depart Southampton</button>
   </div>
@@ -235,16 +252,21 @@ const finalBest    = document.getElementById('finalBest');
 const endTitle     = document.getElementById('endTitle');
 const endSub       = document.getElementById('endSub');
 const vignette     = document.getElementById('alertVignette');
+const viewName     = document.getElementById('viewName');
 
 /* ------------------------------------------------------------------ *
  *  Constants
  * ------------------------------------------------------------------ */
 const LANE_HALF   = 30;    // how far the ship may wander off the rhumb line
-const SPAWN_Z     = -430;  // bergs are born out in the fog
-const DESPAWN_Z   = 60;    // ...and retired once astern of the camera
-const FOG_DENSITY = 0.0042;
-const SKY_TOP     = new THREE.Color(0x05091a);
-const SKY_HORIZON = new THREE.Color(0x101f3a);
+const SPAWN_Z     = -470;  // bergs are born out in the fog
+const DESPAWN_Z   = 70;    // ...and retired once astern
+const FOG_DENSITY = 0.0040;
+const SHIP_LEN    = 30;
+const SHIP_BEAM   = 5.4;
+const SUN_DIR     = new THREE.Vector3(-0.5, 0.7, -0.4).normalize();
+
+// crow's nest sits on the foremast, forward of the bridge and every funnel
+const NEST = new THREE.Vector3(0, 9.6, -SHIP_LEN*0.36);
 
 /* ------------------------------------------------------------------ *
  *  Renderer / scene / camera
@@ -257,7 +279,7 @@ renderer.toneMappingExposure = 1.15;
 const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(0x070d1e, FOG_DENSITY);
 
-const camera = new THREE.PerspectiveCamera(58, 1, 0.1, 1400);
+const camera = new THREE.PerspectiveCamera(60, 1, 0.05, 1600);
 const camShake = new THREE.Vector3();
 
 function resize(){
@@ -266,7 +288,7 @@ function resize(){
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
 
-  wheelSize = Math.max(96, Math.min(150, Math.min(w, h) * 0.24));
+  wheelSize = Math.max(94, Math.min(146, Math.min(w, h) * 0.23));
   wheelWrap.style.width  = wheelSize + 'px';
   wheelWrap.style.height = wheelSize + 'px';
   wheelCanvas.style.width  = wheelSize + 'px';
@@ -281,28 +303,75 @@ function resize(){
  *  Lighting — moonless night: starlight ambience, one cold key light,
  *  and the ship's own lamps doing the close-range work.
  * ------------------------------------------------------------------ */
-scene.add(new THREE.HemisphereLight(0x2b4c7a, 0x03060f, 0.55));
+scene.add(new THREE.HemisphereLight(0x2b4c7a, 0x03060f, 0.6));
 
-const keyLight = new THREE.DirectionalLight(0x9fc4e8, 0.5);
-keyLight.position.set(-40, 60, -30);
+const keyLight = new THREE.DirectionalLight(0x9fc4e8, 0.55);
+keyLight.position.copy(SUN_DIR).multiplyScalar(80);
 scene.add(keyLight);
 
-const bowLamp = new THREE.PointLight(0xffd9a0, 22, 90, 2);
-bowLamp.position.set(0, 5, -14);
+const bowLamp = new THREE.PointLight(0xffd9a0, 26, 100, 2);
 scene.add(bowLamp);
 
-const deckLamp = new THREE.PointLight(0xfff0d0, 10, 45, 2);
-deckLamp.position.set(0, 8, 4);
-scene.add(deckLamp);
+const nestLamp = new THREE.PointLight(0xfff0d0, 6, 26, 2);
+scene.add(nestLamp);
+
+/* ------------------------------------------------------------------ *
+ *  Shared noise, used for ice form and for the sea
+ * ------------------------------------------------------------------ */
+function mulberry32(seed){
+  let a = seed >>> 0;
+  return function(){
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function h3(i, j, k){
+  const s = Math.sin(i*127.1 + j*311.7 + k*74.7) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+// smooth 3D value noise — neighbouring samples move together, which is the
+// whole point: independent per-vertex randomness reads as noise, not as form
+function noise3(x, y, z){
+  const i = Math.floor(x), j = Math.floor(y), k = Math.floor(z);
+  const fx = x-i, fy = y-j, fz = z-k;
+  const ux = fx*fx*(3-2*fx), uy = fy*fy*(3-2*fy), uz = fz*fz*(3-2*fz);
+  const n = (a,b,c) => h3(i+a, j+b, k+c);
+  const x00 = n(0,0,0) + (n(1,0,0) - n(0,0,0))*ux;
+  const x10 = n(0,1,0) + (n(1,1,0) - n(0,1,0))*ux;
+  const x01 = n(0,0,1) + (n(1,0,1) - n(0,0,1))*ux;
+  const x11 = n(0,1,1) + (n(1,1,1) - n(0,1,1))*ux;
+  const y0 = x00 + (x10 - x00)*uy;
+  const y1 = x01 + (x11 - x01)*uy;
+  return y0 + (y1 - y0)*uz;
+}
+
+function fbm3(x, y, z, octaves){
+  let amp = 0.5, freq = 1, sum = 0, norm = 0;
+  for(let o=0; o<(octaves||4); o++){
+    sum  += amp * noise3(x*freq, y*freq, z*freq);
+    norm += amp;
+    amp  *= 0.5;
+    freq *= 2.07;
+  }
+  return sum / norm;
+}
 
 /* ------------------------------------------------------------------ *
  *  Sky dome + stars
  * ------------------------------------------------------------------ */
-{
-  const skyGeo = new THREE.SphereGeometry(900, 32, 20);
-  const skyMat = new THREE.ShaderMaterial({
+const skyDome = (() => {
+  const geo = new THREE.SphereGeometry(1000, 32, 20);
+  const mat = new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite:false, fog:false,
-    uniforms:{ uTop:{value:SKY_TOP}, uHorizon:{value:SKY_HORIZON} },
+    uniforms:{
+      uTop:     { value: new THREE.Color(0x05091a) },
+      uHorizon: { value: new THREE.Color(0x101f3a) }
+    },
     vertexShader:`
       varying float vY;
       void main(){
@@ -317,21 +386,24 @@ scene.add(deckLamp);
         gl_FragColor = vec4(mix(uHorizon, uTop, pow(t, 0.75)), 1.0);
       }`
   });
-  scene.add(new THREE.Mesh(skyGeo, skyMat));
-}
+  const m = new THREE.Mesh(geo, mat);
+  scene.add(m);
+  return m;
+})();
 
 const stars = (() => {
-  const N = 1400, pos = new Float32Array(N*3), siz = new Float32Array(N), pha = new Float32Array(N);
+  const N = 1600;
+  const pos = new Float32Array(N*3), siz = new Float32Array(N), pha = new Float32Array(N);
+  const rnd = mulberry32(20250401);
   for(let i=0;i<N;i++){
-    // upper hemisphere only, biased away from the horizon haze
-    const u = Math.random()*Math.PI*2;
-    const v = Math.pow(Math.random(), 0.6) * (Math.PI*0.46);
-    const r = 820;
+    const u = rnd()*Math.PI*2;
+    const v = Math.pow(rnd(), 0.6) * (Math.PI*0.46);   // bias away from horizon haze
+    const r = 900;
     pos[i*3+0] = Math.cos(u) * Math.sin(v) * r;
     pos[i*3+1] = Math.cos(v) * r * 0.9 + 20;
     pos[i*3+2] = Math.sin(u) * Math.sin(v) * r;
-    siz[i] = 1.2 + Math.random()*2.6;
-    pha[i] = Math.random()*Math.PI*2;
+    siz[i] = 1.2 + rnd()*2.6;
+    pha[i] = rnd()*Math.PI*2;
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos,3));
@@ -345,15 +417,13 @@ const stars = (() => {
       uniform float uTime; varying float vA;
       void main(){
         vA = 0.45 + 0.45*sin(uTime*1.4 + aPhase);
-        vec4 mv = modelViewMatrix * vec4(position,1.0);
         gl_PointSize = aSize;
-        gl_Position = projectionMatrix * mv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
       }`,
     fragmentShader:`
       varying float vA;
       void main(){
-        vec2 d = gl_PointCoord - 0.5;
-        float a = smoothstep(0.5, 0.0, length(d)) * vA;
+        float a = smoothstep(0.5, 0.0, length(gl_PointCoord - 0.5)) * vA;
         gl_FragColor = vec4(vec3(0.80,0.86,0.96), a);
       }`
   });
@@ -385,52 +455,60 @@ function waveH(x, z, t){
        + 0.18*Math.sin(x*0.210 - z*0.160 + t*2.30);
 }
 
+// hand-rolled FogExp2 match, shared by every custom material below
+const FOG_GLSL = `
+  vec3 applyFog(vec3 col, vec3 world, vec3 camPos, vec3 fogCol, float fogDen){
+    float d = length(camPos - world);
+    float f = 1.0 - exp(-pow(fogDen * d, 2.0));
+    return mix(col, fogCol, clamp(f, 0.0, 1.0));
+  }`;
+
 const oceanUniforms = {
   uTime:    { value: 0 },
   uScroll:  { value: 0 },
   uDeep:    { value: new THREE.Color(0x040a17) },
   uShallow: { value: new THREE.Color(0x14304f) },
   uFogCol:  { value: new THREE.Color(0x070d1e) },
-  uFogDen:  { value: FOG_DENSITY }
+  uFogDen:  { value: FOG_DENSITY },
+  uSun:     { value: SUN_DIR }
 };
 
 const ocean = (() => {
-  const g = new THREE.PlaneGeometry(1100, 1100, 260, 260);
+  const g = new THREE.PlaneGeometry(1400, 1400, 300, 300);
   g.rotateX(-Math.PI/2);
   const m = new THREE.ShaderMaterial({
     uniforms: oceanUniforms,
     vertexShader: WAVE_GLSL + `
       uniform float uTime; uniform float uScroll;
-      varying vec3 vWorld; varying vec3 vNormal; varying float vH;
+      varying vec3 vWorld; varying vec3 vNrm; varying float vH;
       void main(){
         vec4 wp = modelMatrix * vec4(position, 1.0);
-        vec2 q  = vec2(wp.x, wp.z - uScroll);   // minus: swell travels aft, toward the camera
+        vec2 q  = vec2(wp.x, wp.z - uScroll);   // minus: swell travels aft
         float h = waveH(q, uTime);
         wp.y += h;
 
-        // analytic-ish normal via central differences
         float e = 1.2;
         float hx = waveH(q + vec2(e,0.0), uTime) - waveH(q - vec2(e,0.0), uTime);
         float hz = waveH(q + vec2(0.0,e), uTime) - waveH(q - vec2(0.0,e), uTime);
-        vNormal = normalize(vec3(-hx, 2.0*e, -hz));
+        vNrm = normalize(vec3(-hx, 2.0*e, -hz));
 
         vWorld = wp.xyz;
         vH = h;
         gl_Position = projectionMatrix * viewMatrix * wp;
       }`,
-    fragmentShader: `
-      uniform vec3 uDeep; uniform vec3 uShallow; uniform vec3 uFogCol; uniform float uFogDen;
-      varying vec3 vWorld; varying vec3 vNormal; varying float vH;
+    fragmentShader: FOG_GLSL + `
+      uniform vec3 uDeep; uniform vec3 uShallow; uniform vec3 uFogCol;
+      uniform float uFogDen; uniform vec3 uSun;
+      varying vec3 vWorld; varying vec3 vNrm; varying float vH;
       void main(){
-        vec3 N = normalize(vNormal);
+        vec3 N = normalize(vNrm);
         vec3 V = normalize(cameraPosition - vWorld);
-        vec3 L = normalize(vec3(-0.5, 0.7, -0.4));
 
         float crest = smoothstep(-0.8, 1.1, vH);
         vec3 base = mix(uDeep, uShallow, crest);
 
-        float diff = max(dot(N, L), 0.0);
-        float spec = pow(max(dot(reflect(-L, N), V), 0.0), 42.0);
+        float diff = max(dot(N, uSun), 0.0);
+        float spec = pow(max(dot(reflect(-uSun, N), V), 0.0), 42.0);
         float fres = pow(1.0 - max(dot(N, V), 0.0), 4.0);
 
         vec3 col = base
@@ -438,28 +516,25 @@ const ocean = (() => {
                  + vec3(0.55,0.68,0.80) * spec * 0.55
                  + vec3(0.10,0.20,0.32) * fres;
 
-        // match scene.fog (FogExp2) by hand — this material opts out of three's fog chunks
-        float d = length(cameraPosition - vWorld);
-        float f = 1.0 - exp(-pow(uFogDen * d, 2.0));
-        gl_FragColor = vec4(mix(col, uFogCol, clamp(f, 0.0, 1.0)), 1.0);
+        gl_FragColor = vec4(applyFog(col, vWorld, cameraPosition, uFogCol, uFogDen), 1.0);
       }`
   });
   const mesh = new THREE.Mesh(g, m);
-  mesh.position.set(0, 0, -420);   // pushed ahead so the field reaches the fog wall
   scene.add(mesh);
   return mesh;
 })();
 
 /* ------------------------------------------------------------------ *
- *  Ship — a stylised RMS Titanic, seen from astern
+ *  Ship
  * ------------------------------------------------------------------ */
-const ship = new THREE.Group();
-const shipRig = new THREE.Group();   // holds pitch/roll so ship.rotation stays clean
+const ship = new THREE.Group();     // hull-local space: bow at -Z, deck at y≈4.2
+const shipRig = new THREE.Group();  // carries heave / pitch / roll / yaw
 shipRig.add(ship);
 scene.add(shipRig);
 
-const SHIP_LEN  = 30;
-const SHIP_BEAM = 5.4;
+const nestAnchor = new THREE.Object3D();
+nestAnchor.position.copy(NEST);
+ship.add(nestAnchor);
 
 {
   const black = new THREE.MeshStandardMaterial({ color:0x0a1020, roughness:0.55, metalness:0.25 });
@@ -467,33 +542,93 @@ const SHIP_BEAM = 5.4;
   const buff  = new THREE.MeshStandardMaterial({ color:0xc9744f, roughness:0.75 });
   const soot  = new THREE.MeshStandardMaterial({ color:0x14161a, roughness:0.9 });
   const teak  = new THREE.MeshStandardMaterial({ color:0x6b4a2c, roughness:0.85 });
+  const iron  = new THREE.MeshStandardMaterial({ color:0x2a3038, roughness:0.6, metalness:0.5 });
   const gold  = new THREE.MeshStandardMaterial({ color:0xc9a15a, roughness:0.35, metalness:0.8, emissive:0x2a1e08 });
+  const lit   = new THREE.MeshStandardMaterial({ color:0xffe3ae, emissive:0xffc46a, emissiveIntensity:1.6, roughness:0.4 });
 
   // --- hull: top-down outline, extruded downward ---
   const half = SHIP_BEAM/2, L = SHIP_LEN/2;
-  const s = new THREE.Shape();
-  s.moveTo(0, L);                                       // stem
-  s.bezierCurveTo( half*0.85,  L*0.86,  half, L*0.25,  half, -L*0.35);
-  s.bezierCurveTo( half*0.98, -L*0.78,  half*0.55, -L, 0,    -L);      // counter stern
-  s.bezierCurveTo(-half*0.55, -L, -half*0.98, -L*0.78, -half, -L*0.35);
-  s.bezierCurveTo(-half, L*0.25, -half*0.85, L*0.86, 0, L);
+  const outline = new THREE.Shape();
+  outline.moveTo(0, L);                                                   // stem
+  outline.bezierCurveTo( half*0.85,  L*0.86,  half, L*0.25,  half, -L*0.35);
+  outline.bezierCurveTo( half*0.98, -L*0.78,  half*0.55, -L, 0,    -L);   // counter stern
+  outline.bezierCurveTo(-half*0.55, -L, -half*0.98, -L*0.78, -half, -L*0.35);
+  outline.bezierCurveTo(-half, L*0.25, -half*0.85, L*0.86, 0, L);
 
-  const hullGeo = new THREE.ExtrudeGeometry(s, {
-    depth: 3.1, bevelEnabled:true, bevelSize:0.55, bevelThickness:0.75, bevelSegments:3, curveSegments:24
+  const hullGeo = new THREE.ExtrudeGeometry(outline, {
+    depth:3.1, bevelEnabled:true, bevelSize:0.55, bevelThickness:0.75, bevelSegments:3, curveSegments:24
   });
-  hullGeo.rotateX(-Math.PI/2);           // shape's +Y (stem) becomes -Z, so the bow leads
-  hullGeo.translate(0, -1.55, 0);        // sink half the extrusion below the deck line at y=0
-  const hull = new THREE.Mesh(hullGeo, black);
-  ship.add(hull);
+  hullGeo.rotateX(-Math.PI/2);      // shape's +Y (stem) becomes -Z, so the bow leads
+  hullGeo.translate(0, -1.55, 0);
+  ship.add(new THREE.Mesh(hullGeo, black));
 
-  // waterline stripe + boot topping
-  const stripeGeo = new THREE.ExtrudeGeometry(s, { depth:0.34, bevelEnabled:false, curveSegments:24 });
+  // red boot topping at the waterline
+  const stripeGeo = new THREE.ExtrudeGeometry(outline, { depth:0.34, bevelEnabled:false, curveSegments:24 });
   stripeGeo.rotateX(-Math.PI/2);
   stripeGeo.translate(0, -0.28, 0);
   stripeGeo.scale(1.012, 1, 1.004);
   ship.add(new THREE.Mesh(stripeGeo, new THREE.MeshStandardMaterial({ color:0x7a1f1f, roughness:0.8 })));
 
-  // --- superstructure: two tiers of white deckhouse ---
+  // --- weather deck: the surface the lookout actually sees ---
+  const deckGeo = new THREE.ExtrudeGeometry(outline, { depth:0.18, bevelEnabled:false, curveSegments:24 });
+  deckGeo.rotateX(-Math.PI/2);
+  deckGeo.translate(0, 1.62, 0);
+  deckGeo.scale(0.965, 1, 0.99);
+  ship.add(new THREE.Mesh(deckGeo, teak));
+
+  // --- forecastle: raised deck right forward, seen foreshortened from the nest ---
+  const foreShape = new THREE.Shape();
+  foreShape.moveTo(0, L);
+  foreShape.bezierCurveTo( half*0.82,  L*0.86,  half*0.94, L*0.42,  half*0.92, L*0.30);
+  foreShape.lineTo(-half*0.92, L*0.30);
+  foreShape.bezierCurveTo(-half*0.94, L*0.42, -half*0.82, L*0.86, 0, L);
+  const foreGeo = new THREE.ExtrudeGeometry(foreShape, { depth:0.9, bevelEnabled:false, curveSegments:20 });
+  foreGeo.rotateX(-Math.PI/2);
+  foreGeo.translate(0, 2.5, 0);
+  foreGeo.scale(0.95, 1, 1);
+  ship.add(new THREE.Mesh(foreGeo, black));
+
+  const foreDeck = new THREE.Mesh(new THREE.BoxGeometry(SHIP_BEAM*0.80, 0.1, SHIP_LEN*0.19), teak);
+  foreDeck.position.set(0, 2.56, -SHIP_LEN*0.40);
+  ship.add(foreDeck);
+
+  // breakwater — the V that throws green water off the well deck
+  for(const sx of [-1, 1]){
+    const w = new THREE.Mesh(new THREE.BoxGeometry(SHIP_BEAM*0.44, 0.34, 0.1), iron);
+    w.position.set(sx*SHIP_BEAM*0.20, 2.72, -SHIP_LEN*0.285);
+    w.rotation.y = sx*0.42;
+    ship.add(w);
+  }
+
+  // ground tackle: windlass drums and a pair of cargo winches
+  for(const sx of [-1, 1]){
+    const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.5, 12), iron);
+    drum.rotation.z = Math.PI/2;
+    drum.position.set(sx*SHIP_BEAM*0.24, 2.75, -SHIP_LEN*0.435);
+    ship.add(drum);
+
+    const capstan = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.3, 12), iron);
+    capstan.position.set(sx*SHIP_BEAM*0.26, 2.7, -SHIP_LEN*0.335);
+    ship.add(capstan);
+  }
+
+  // bulwark rail around the forecastle edge
+  const railGeo = new THREE.TorusGeometry(SHIP_BEAM*0.40, 0.035, 5, 24, Math.PI);
+  const rail = new THREE.Mesh(railGeo, iron);
+  rail.rotation.x = -Math.PI/2;
+  rail.rotation.z = Math.PI;
+  rail.position.set(0, 2.94, -SHIP_LEN*0.435);
+  rail.scale.set(1, 1.5, 1);
+  ship.add(rail);
+
+  // well deck hatches between forecastle and bridge
+  for(let i=0;i<2;i++){
+    const hatch = new THREE.Mesh(new THREE.BoxGeometry(SHIP_BEAM*0.42, 0.22, 1.5), iron);
+    hatch.position.set(0, 1.82, -SHIP_LEN*0.265 + i*2.4);
+    ship.add(hatch);
+  }
+
+  // --- superstructure ---
   const house1 = new THREE.Mesh(new THREE.BoxGeometry(SHIP_BEAM*0.78, 1.5, SHIP_LEN*0.56), white);
   house1.position.set(0, 2.35, -SHIP_LEN*0.02);
   ship.add(house1);
@@ -502,7 +637,6 @@ const SHIP_BEAM = 5.4;
   house2.position.set(0, 3.55, -SHIP_LEN*0.04);
   ship.add(house2);
 
-  // boat deck strip + davits
   const boatDeck = new THREE.Mesh(new THREE.BoxGeometry(SHIP_BEAM*0.66, 0.12, SHIP_LEN*0.42), teak);
   boatDeck.position.set(0, 4.14, -SHIP_LEN*0.04);
   ship.add(boatDeck);
@@ -519,80 +653,263 @@ const SHIP_BEAM = 5.4;
     }
   }
 
-  // --- bridge, right up forward, with lit windows ---
+  // bridge, with lit wheelhouse windows
   const bridge = new THREE.Mesh(new THREE.BoxGeometry(SHIP_BEAM*0.72, 0.9, 1.7), white);
   bridge.position.set(0, 4.6, -SHIP_LEN*0.24);
   ship.add(bridge);
-  const glass = new THREE.Mesh(
-    new THREE.BoxGeometry(SHIP_BEAM*0.60, 0.42, 0.08),
-    new THREE.MeshStandardMaterial({ color:0xffe3ae, emissive:0xffc46a, emissiveIntensity:1.6, roughness:0.4 })
-  );
+  const glass = new THREE.Mesh(new THREE.BoxGeometry(SHIP_BEAM*0.60, 0.42, 0.08), lit);
   glass.position.set(0, 4.66, -SHIP_LEN*0.24 - 0.86);
   ship.add(glass);
 
-  // --- four funnels, buff with black tops ---
+  // --- four funnels, buff with black tops, raked aft ---
   const funnelZ = [-SHIP_LEN*0.155, -SHIP_LEN*0.025, SHIP_LEN*0.105, SHIP_LEN*0.235];
   const smokeAnchors = [];
   funnelZ.forEach((fz, i) => {
     const h = 4.6 - i*0.18;
     const f = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.72, h, 20, 1, true), buff);
     f.position.set(0, 4.2 + h/2, fz);
-    f.rotation.x = -0.045;               // funnels rake aft, as she did
+    f.rotation.x = -0.045;
     ship.add(f);
 
     const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.63, 0.63, h*0.20, 20), soot);
     cap.position.set(0, 4.2 + h - h*0.10, fz);
     ship.add(cap);
 
-    // 4th funnel was a dummy — no smoke from it
-    if(i < 3) smokeAnchors.push(new THREE.Vector3(0, 4.2 + h + 0.3, fz));
+    if(i < 3) smokeAnchors.push(new THREE.Vector3(0, 4.2 + h + 0.3, fz));   // 4th was a dummy
   });
   ship.userData.smokeAnchors = smokeAnchors;
 
-  // --- masts ---
-  for(const mz of [-SHIP_LEN*0.36, SHIP_LEN*0.34]){
-    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.13, 7.5, 8), teak);
-    mast.position.set(0, 5.3, mz);
-    ship.add(mast);
-    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 8), gold);
-    lamp.position.set(0, 9.1, mz);
-    ship.add(lamp);
-  }
+  // --- foremast + crow's nest, and the main mast aft ---
+  const foreMastLower = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.17, NEST.y - 2.6, 10), teak);
+  foreMastLower.position.set(0, 2.6 + (NEST.y - 2.6)/2, NEST.z);
+  ship.add(foreMastLower);
 
-  // --- bow lantern glow ---
-  const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 10),
+  const foreMastUpper = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.1, 3.0, 8), teak);
+  foreMastUpper.position.set(0, NEST.y + 1.6, NEST.z);
+  ship.add(foreMastUpper);
+
+  const mastLamp = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), gold);
+  mastLamp.position.set(0, NEST.y + 3.2, NEST.z);
+  ship.add(mastLamp);
+
+  // the barrel itself — deliberately framed to sit just below the eyeline
+  const barrel = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.82, 0.72, 1.15, 18, 1, true),
+    new THREE.MeshStandardMaterial({ color:0x1d232c, roughness:0.85, side:THREE.DoubleSide })
+  );
+  barrel.position.set(0, NEST.y - 0.78, NEST.z);
+  ship.add(barrel);
+
+  const barrelFloor = new THREE.Mesh(new THREE.CircleGeometry(0.78, 18), teak);
+  barrelFloor.rotation.x = -Math.PI/2;
+  barrelFloor.position.set(0, NEST.y - 1.34, NEST.z);
+  ship.add(barrelFloor);
+
+  const barrelRim = new THREE.Mesh(new THREE.TorusGeometry(0.83, 0.05, 6, 22), gold);
+  barrelRim.rotation.x = Math.PI/2;
+  barrelRim.position.set(0, NEST.y - 0.22, NEST.z);
+  ship.add(barrelRim);
+
+  // the lookout's bell, hung on the rim — the one Fleet rang three times
+  const bell = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.11, 0.15, 10), gold);
+  bell.position.set(0.60, NEST.y - 0.36, NEST.z - 0.55);
+  ship.add(bell);
+
+  const mainMast = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.13, 7.5, 8), teak);
+  mainMast.position.set(0, 5.3, SHIP_LEN*0.34);
+  ship.add(mainMast);
+  const mainLamp = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 8), gold);
+  mainLamp.position.set(0, 9.1, SHIP_LEN*0.34);
+  ship.add(mainLamp);
+
+  // bow lantern
+  const lantern = new THREE.Mesh(new THREE.SphereGeometry(0.18, 10, 10),
     new THREE.MeshStandardMaterial({ color:0xffd9a0, emissive:0xffb257, emissiveIntensity:2.4 }));
-  lantern.position.set(0, 2.0, -SHIP_LEN*0.46);
+  lantern.position.set(0, 3.0, -SHIP_LEN*0.475);
   ship.add(lantern);
 }
 
 /* ------------------------------------------------------------------ *
  *  Icebergs
+ *
+ *  Form comes from coherent FBM noise over a dense icosahedron, then an
+ *  archetype profile drawn from the real classifications (tabular, dome,
+ *  pinnacle, wedge, blocky). Geometry is authored so y = 0 IS the
+ *  waterline: roughly a third of the mass stands above it, the rest
+ *  spreads into a broad submerged shelf.
  * ------------------------------------------------------------------ */
-const bergMat = new THREE.MeshStandardMaterial({
-  color:0x8fa6b2, roughness:0.42, metalness:0.05, flatShading:true
-});
-const bergSubMat = new THREE.MeshStandardMaterial({
-  color:0x27414f, roughness:0.9, transparent:true, opacity:0.55, flatShading:true
+const ARCHETYPES = ['tabular', 'dome', 'pinnacle', 'wedge', 'blocky'];
+
+function makeIceberg(seed, kind){
+  const geo = new THREE.IcosahedronGeometry(1, 3);
+  const pos = geo.attributes.position;
+  const rnd = mulberry32(seed);
+
+  const ox = rnd()*80, oy = rnd()*80, oz = rnd()*80;
+  const rough    = 0.13 + rnd()*0.15;
+  const lumpFreq = 1.3 + rnd()*1.1;
+  const topY     = 0.34 + rnd()*0.30;          // tabular plateau height
+  const spireA   = rnd()*Math.PI*2;            // pinnacle bearing
+  const spireB   = spireA + 1.6 + rnd()*1.4;
+  const wedgeA   = rnd()*Math.PI*2;
+  const rise     = 0.85 + rnd()*0.75;          // vertical exaggeration above water
+
+  const v = new THREE.Vector3();
+  const d = new THREE.Vector3();
+
+  for(let i=0;i<pos.count;i++){
+    v.fromBufferAttribute(pos, i);
+    d.copy(v).normalize();
+
+    // coherent lumpiness — two scales so there are broad faces AND detail
+    const n1 = fbm3(d.x*lumpFreq + ox, d.y*lumpFreq + oy, d.z*lumpFreq + oz, 4);
+    const n2 = fbm3(d.x*4.6 + oz, d.y*4.6 + ox, d.z*4.6 + oy, 2);
+    let r = 1 + (n1 - 0.5)*2*rough + (n2 - 0.5)*2*rough*0.35;
+
+    const up = Math.max(d.y, 0);
+    const bearing = Math.atan2(d.z, d.x);
+
+    if(kind === 'tabular'){
+      r *= 1.22 - 0.10*up;                       // wide and steep-sided
+    } else if(kind === 'dome'){
+      r *= 1.05 + 0.10*Math.sin(up*Math.PI);     // rounded shoulder
+    } else if(kind === 'pinnacle'){
+      const s1 = Math.max(0, Math.cos(bearing - spireA)) * up;
+      const s2 = Math.max(0, Math.cos(bearing - spireB)) * up;
+      r *= 1.0 + 1.05*Math.pow(s1, 2.1) + 0.62*Math.pow(s2, 2.4);
+    } else if(kind === 'wedge'){
+      const lean = Math.cos(bearing - wedgeA);
+      r *= 1.10 + 0.34*lean*up;                  // steep face one side, ramp the other
+    } else {                                     // blocky — rounded cube
+      const m = Math.max(Math.abs(d.x), Math.max(Math.abs(d.y), Math.abs(d.z)));
+      r *= 1.12 / Math.pow(m, 0.42);
+    }
+
+    v.copy(d).multiplyScalar(r);
+
+    if(kind === 'tabular'){
+      // a hard clamp is exactly right here: tabular bergs have a flat top
+      // meeting the sides at a crisp edge
+      if(v.y > topY) v.y = topY + (v.y - topY)*0.10;
+    }
+
+    if(v.y >= 0){
+      v.y *= rise;
+    } else {
+      // submerged shelf: shallower but much broader than the visible peak
+      const depth = -v.y;
+      v.y *= 1.35;
+      const spread = 1 + depth*0.42;
+      v.x *= spread;
+      v.z *= spread;
+    }
+
+    pos.setXYZ(i, v.x, v.y, v.z);
+  }
+
+  geo.computeVertexNormals();
+  geo.computeBoundingBox();
+  const bb = geo.boundingBox;
+  geo.userData.hullR = Math.max(
+    Math.abs(bb.min.x), Math.abs(bb.max.x),
+    Math.abs(bb.min.z), Math.abs(bb.max.z)
+  );
+  geo.userData.top = bb.max.y;
+  return geo;
+}
+
+// 15 cached shapes: three variants of each archetype, shared by every instance
+const BERG_GEOS = [];
+for(let a=0; a<ARCHETYPES.length; a++){
+  for(let k=0; k<3; k++){
+    BERG_GEOS.push(makeIceberg(a*9176 + k*613 + 17, ARCHETYPES[a]));
+  }
+}
+
+const iceUniforms = {
+  uFogCol: { value: new THREE.Color(0x070d1e) },
+  uFogDen: { value: FOG_DENSITY },
+  uSun:    { value: SUN_DIR },
+  uTime:   { value: 0 }
+};
+
+const iceMat = new THREE.ShaderMaterial({
+  uniforms: iceUniforms,
+  vertexShader: `
+    varying vec3 vWorld; varying vec3 vNrm; varying float vLocalY;
+    void main(){
+      vec4 wp = modelMatrix * vec4(position, 1.0);
+      vWorld  = wp.xyz;
+      vNrm    = normalize(mat3(modelMatrix) * normal);
+      vLocalY = position.y;
+      gl_Position = projectionMatrix * viewMatrix * wp;
+    }`,
+  fragmentShader: FOG_GLSL + `
+    uniform vec3 uFogCol; uniform float uFogDen; uniform vec3 uSun; uniform float uTime;
+    varying vec3 vWorld; varying vec3 vNrm; varying float vLocalY;
+    void main(){
+      vec3 N = normalize(vNrm);
+      vec3 V = normalize(cameraPosition - vWorld);
+
+      // starlit hemisphere ambient: cold from above, near-black from below
+      float sky = 0.5 + 0.5*N.y;
+      vec3 amb = mix(vec3(0.028,0.043,0.072), vec3(0.30,0.40,0.52), sky);
+
+      float diff = max(dot(N, uSun), 0.0);
+      vec3 col = amb + vec3(0.46,0.56,0.66) * diff * 0.85;
+
+      // fresnel rim — ice catches starlight hard at grazing angles
+      float fres = pow(1.0 - max(dot(N, V), 0.0), 3.0);
+      col += vec3(0.42,0.58,0.70) * fres * 0.85;
+
+      // cheap subsurface: upward faces glow faintly, as packed snow does
+      col += vec3(0.10,0.15,0.20) * pow(max(N.y, 0.0), 2.0);
+
+      // waterline: a bright wet band, then deep teal falling away below
+      float wet = 1.0 - smoothstep(0.0, 0.55, abs(vWorld.y));
+      col += vec3(0.20,0.28,0.34) * wet * 0.8;
+      if(vWorld.y < 0.0){
+        float dep = clamp(-vWorld.y / 5.0, 0.0, 1.0);
+        col = mix(col, vec3(0.030,0.105,0.135), dep*0.90);
+        col += vec3(0.0,0.05,0.06) * (1.0 - dep) * (0.5 + 0.5*sin(uTime*1.6 + vWorld.x*0.4));
+      }
+
+      // faint crevasse shading keyed to local height
+      col *= 0.92 + 0.08*sin(vLocalY*9.0);
+
+      gl_FragColor = vec4(applyFog(col, vWorld, cameraPosition, uFogCol, uFogDen), 1.0);
+    }`
 });
 
-function makeBergGeometry(seed){
-  const g = new THREE.IcosahedronGeometry(1, 1);
-  const p = g.attributes.position;
-  const v = new THREE.Vector3();
-  let n = seed;
-  const rnd = () => { n = (n*16807) % 2147483647; return n / 2147483647; };
-  for(let i=0;i<p.count;i++){
-    v.fromBufferAttribute(p, i);
-    const k = 0.55 + rnd()*0.85;
-    v.multiplyScalar(k);
-    v.y = v.y > 0 ? v.y * (1.15 + rnd()*0.7) : v.y * 0.45;   // jagged above, blunt below
-    p.setXYZ(i, v.x, v.y, v.z);
-  }
-  g.computeVertexNormals();
-  return g;
-}
-const BERG_GEOS = Array.from({length:8}, (_,i) => makeBergGeometry(i*7919 + 13));
+// soft foam collar where the swell breaks against the ice
+const foamMat = new THREE.ShaderMaterial({
+  transparent:true, depthWrite:false, side:THREE.DoubleSide,
+  uniforms:{ uTime:{value:0}, uFogCol:iceUniforms.uFogCol, uFogDen:iceUniforms.uFogDen },
+  vertexShader:`
+    varying vec2 vUv; varying vec3 vWorld;
+    void main(){
+      vUv = uv;
+      vec4 wp = modelMatrix * vec4(position,1.0);
+      vWorld = wp.xyz;
+      gl_Position = projectionMatrix * viewMatrix * wp;
+    }`,
+  fragmentShader: FOG_GLSL + `
+    uniform float uTime; uniform vec3 uFogCol; uniform float uFogDen;
+    varying vec2 vUv; varying vec3 vWorld;
+    void main(){
+      float r = vUv.x;                                  // 0 at inner edge, 1 at outer
+      float band = smoothstep(0.0, 0.25, r) * (1.0 - smoothstep(0.45, 1.0, r));
+      float churn = 0.62 + 0.38*sin(vUv.y*34.0 + uTime*3.1)
+                         * sin(vUv.y*11.0 - uTime*1.7);
+      float a = band * churn * 0.62;
+      if(a < 0.01) discard;
+      vec3 col = applyFog(vec3(0.86,0.94,0.96), vWorld, cameraPosition, uFogCol, uFogDen);
+      gl_FragColor = vec4(col, a);
+    }`
+});
+
+const FOAM_GEO = new THREE.RingGeometry(0.92, 1.5, 40, 1);
+FOAM_GEO.rotateX(-Math.PI/2);
 
 const bergs = [];
 const bergPool = [];
@@ -600,30 +917,33 @@ const bergPool = [];
 function acquireBerg(){
   if(bergPool.length) return bergPool.pop();
   const grp = new THREE.Group();
-  const top = new THREE.Mesh(BERG_GEOS[0], bergMat);
-  const sub = new THREE.Mesh(BERG_GEOS[0], bergSubMat);
-  sub.scale.set(1.35, 0.5, 1.35);
-  sub.position.y = -0.9;
-  grp.add(top, sub);
-  grp.userData.top = top;
-  grp.userData.sub = sub;
+  const ice = new THREE.Mesh(BERG_GEOS[0], iceMat);
+  const foam = new THREE.Mesh(FOAM_GEO, foamMat);
+  grp.add(ice, foam);
+  grp.userData.ice = ice;
+  grp.userData.foam = foam;
   scene.add(grp);
   return grp;
 }
 
 function spawnBerg(){
   const g = acquireBerg();
-  const r = 3.2 + Math.random()*7.5;
   const geo = BERG_GEOS[(Math.random()*BERG_GEOS.length)|0];
-  g.userData.top.geometry = geo;
-  g.userData.sub.geometry = geo;
-  g.scale.setScalar(r);
-  g.position.set((Math.random()*2 - 1) * (LANE_HALF + 6), 0, SPAWN_Z - Math.random()*70);
+  const r = 3.0 + Math.random()*7.0;
+
+  g.userData.ice.geometry = geo;
+  g.userData.ice.scale.setScalar(r);
+  // the collar tracks the berg's actual footprint, not a nominal radius
+  g.userData.foam.scale.setScalar(r * geo.userData.hullR * 1.02);
+  g.userData.foam.position.y = 0.06;
+
+  g.position.set((Math.random()*2 - 1) * (LANE_HALF + 8), 0, SPAWN_Z - Math.random()*90);
   g.rotation.set(0, Math.random()*Math.PI*2, 0);
   g.visible = true;
   g.userData.r = r;
+  g.userData.hullR = r * geo.userData.hullR;
   g.userData.passed = false;
-  g.userData.spin = (Math.random()-0.5) * 0.12;
+  g.userData.spin = (Math.random() - 0.5) * 0.10;
   g.userData.bobPhase = Math.random()*Math.PI*2;
   bergs.push(g);
 }
@@ -634,9 +954,9 @@ function releaseBerg(g){
 }
 
 /* ------------------------------------------------------------------ *
- *  Particle systems: wake foam, funnel smoke, collision spray
+ *  Particle systems: bow wave, wake foam, funnel smoke, impact spray
  * ------------------------------------------------------------------ */
-function makePoints(count, color, size, blending){
+function makePoints(count, color, size, blending, opacity){
   const pos = new Float32Array(count*3);
   const alp = new Float32Array(count);
   const scl = new Float32Array(count);
@@ -646,23 +966,32 @@ function makePoints(count, color, size, blending){
   g.setAttribute('aScale',   new THREE.BufferAttribute(scl,1));
   const m = new THREE.ShaderMaterial({
     transparent:true, depthWrite:false, blending,
-    uniforms:{ uColor:{value:new THREE.Color(color)}, uSize:{value:size} },
+    uniforms:{
+      uColor:  { value:new THREE.Color(color) },
+      uSize:   { value:size },
+      uOpacity:{ value: opacity === undefined ? 1 : opacity },
+      uFogCol: { value: iceUniforms.uFogCol.value },
+      uFogDen: { value: FOG_DENSITY }
+    },
     vertexShader:`
       attribute float aAlpha; attribute float aScale;
-      uniform float uSize; varying float vA;
+      uniform float uSize; varying float vA; varying vec3 vWorld;
       void main(){
         vA = aAlpha;
-        vec4 mv = modelViewMatrix * vec4(position,1.0);
+        vec4 wp = modelMatrix * vec4(position,1.0);
+        vWorld = wp.xyz;
+        vec4 mv = viewMatrix * wp;
         gl_PointSize = uSize * aScale * (300.0 / max(-mv.z, 1.0));
         gl_Position = projectionMatrix * mv;
       }`,
-    fragmentShader:`
-      uniform vec3 uColor; varying float vA;
+    fragmentShader: FOG_GLSL + `
+      uniform vec3 uColor; uniform float uOpacity;
+      uniform vec3 uFogCol; uniform float uFogDen;
+      varying float vA; varying vec3 vWorld;
       void main(){
-        float d = length(gl_PointCoord - 0.5);
-        float a = smoothstep(0.5, 0.05, d) * vA;
+        float a = smoothstep(0.5, 0.05, length(gl_PointCoord - 0.5)) * vA * uOpacity;
         if(a < 0.01) discard;
-        gl_FragColor = vec4(uColor, a);
+        gl_FragColor = vec4(applyFog(uColor, vWorld, cameraPosition, uFogCol, uFogDen), a);
       }`
   });
   const pts = new THREE.Points(g, m);
@@ -671,9 +1000,10 @@ function makePoints(count, color, size, blending){
   return { pts, pos, alp, scl, count, cursor:0, data:Array.from({length:count}, () => ({life:0, vx:0, vy:0, vz:0})) };
 }
 
-const wakeFX  = makePoints(900, 0xdfeef2, 5.5, THREE.NormalBlending);
-const smokeFX = makePoints(500, 0x1d2733, 9.0, THREE.NormalBlending);
-const sprayFX = makePoints(400, 0xeaf6f8, 7.0, THREE.AdditiveBlending);
+const bowFX   = makePoints(700, 0xe6f4f7, 6.5, THREE.NormalBlending, 0.95);
+const wakeFX  = makePoints(700, 0xdfeef2, 5.5, THREE.NormalBlending, 0.9);
+const smokeFX = makePoints(360, 0x1b242f, 8.0, THREE.NormalBlending, 0.42);
+const sprayFX = makePoints(400, 0xeaf6f8, 7.0, THREE.AdditiveBlending, 1.0);
 
 function emit(fx, x, y, z, vx, vy, vz, scale){
   const i = fx.cursor; fx.cursor = (i+1) % fx.count;
@@ -685,7 +1015,7 @@ function emit(fx, x, y, z, vx, vy, vz, scale){
 function stepPoints(fx, dt, gravity, drag, fade){
   for(let i=0;i<fx.count;i++){
     const d = fx.data[i];
-    if(d.life <= 0) { if(fx.alp[i] !== 0) fx.alp[i] = 0; continue; }
+    if(d.life <= 0){ if(fx.alp[i] !== 0) fx.alp[i] = 0; continue; }
     d.life -= dt*fade;
     d.vy += gravity*dt;
     d.vx *= (1 - drag*dt); d.vz *= (1 - drag*dt);
@@ -700,7 +1030,7 @@ function stepPoints(fx, dt, gravity, drag, fade){
 }
 
 /* ------------------------------------------------------------------ *
- *  Ship's wheel (2D, unchanged in spirit from the original)
+ *  Ship's wheel
  * ------------------------------------------------------------------ */
 let wheelSize = 120;
 let wheelAngle = 0;
@@ -729,9 +1059,20 @@ window.addEventListener('pointermove', e => {
 window.addEventListener('pointerup',     () => { wheelDragging = false; });
 window.addEventListener('pointercancel', () => { wheelDragging = false; });
 
+const VIEWS = ['nest', 'astern'];
+const VIEW_LABELS = { nest:"Crow's Nest", astern:'Astern' };
+let viewIndex = 0;
+
+function cycleView(){
+  viewIndex = (viewIndex + 1) % VIEWS.length;
+  viewName.textContent = VIEW_LABELS[VIEWS[viewIndex]];
+  camSettled = false;
+}
+
 window.addEventListener('keydown', e => {
   if(e.key==='ArrowLeft'  || e.key==='a' || e.key==='A') keyLeft = true;
   if(e.key==='ArrowRight' || e.key==='d' || e.key==='D') keyRight = true;
+  if(e.key==='c' || e.key==='C') cycleView();
   if((e.key===' ' || e.key==='Enter') && !running) doStart();
 });
 window.addEventListener('keyup', e => {
@@ -811,30 +1152,36 @@ function drawWheel(){
  *  Game state
  * ------------------------------------------------------------------ */
 let running = false;
+let camSettled = false;
 let best = 0;
 try { best = parseInt(localStorage.getItem('titanicBest') || '0', 10) || 0; } catch(_) { best = 0; }
 bestVal.textContent = best;
 
 const st = {
-  x:0, vx:0, lean:0, yaw:0,
+  x:0, vx:0, lean:0, yaw:0, pitch:0, roll:0,
   distance:0, speed:0, elapsed:0,
   spawnTimer:0, spawnInterval:2.6,
-  shake:0, scroll:0, smokeTimer:0, wakeTimer:0
+  shake:0, scroll:0, smokeTimer:0, wakeTimer:0, bowTimer:0
 };
 const BASE_SPEED = 26;
 
 function resetGame(){
-  st.x = 0; st.vx = 0; st.lean = 0; st.yaw = 0;
+  st.x = 0; st.vx = 0; st.lean = 0; st.yaw = 0; st.pitch = 0; st.roll = 0;
   st.distance = 0; st.speed = BASE_SPEED; st.elapsed = 0;
   st.spawnTimer = 0; st.spawnInterval = 2.6;
-  st.shake = 0; st.scroll = 0; st.smokeTimer = 0; st.wakeTimer = 0;
+  st.shake = 0; st.scroll = 0;
+  st.smokeTimer = 0; st.wakeTimer = 0; st.bowTimer = 0;
+  wheelAngle = 0;
 
   while(bergs.length) releaseBerg(bergs.pop());
-  for(const fx of [wakeFX, smokeFX, sprayFX]){
+  for(const fx of [bowFX, wakeFX, smokeFX, sprayFX]){
     for(let i=0;i<fx.count;i++){ fx.data[i].life = 0; fx.alp[i] = 0; }
   }
   // seed the field so the opening shot isn't empty water
-  for(let i=0;i<5;i++){ spawnBerg(); bergs[bergs.length-1].position.z = -120 - i*70; }
+  for(let i=0;i<6;i++){
+    spawnBerg();
+    bergs[bergs.length-1].position.z = -140 - i*62;
+  }
 }
 
 function doStart(){
@@ -848,13 +1195,12 @@ retryBtn.addEventListener('click', doStart);
 
 function triggerEnd(){
   running = false;
-  st.shake = 0.9;
+  st.shake = 1.0;
 
-  const bow = new THREE.Vector3(st.x, 2.5, -SHIP_LEN*0.5);
-  for(let i=0;i<160;i++){
+  for(let i=0;i<180;i++){
     emit(sprayFX,
-      bow.x + (Math.random()-0.5)*6, bow.y + Math.random()*2, bow.z + (Math.random()-0.5)*6,
-      (Math.random()-0.5)*22, 6 + Math.random()*16, (Math.random()-0.5)*22,
+      st.x + (Math.random()-0.5)*7, 2.0 + Math.random()*2.5, -SHIP_LEN*0.5 + (Math.random()-0.5)*7,
+      (Math.random()-0.5)*24, 7 + Math.random()*18, (Math.random()-0.5)*24,
       0.5 + Math.random()*1.2);
   }
 
@@ -873,7 +1219,7 @@ function triggerEnd(){
       ? 'A shorter voyage than most.'
       : 'The unsinkable ship meets the ice, at ' + miles + ' miles.';
     endOverlay.classList.remove('hidden');
-  }, 900);
+  }, 950);
 }
 
 /* ------------------------------------------------------------------ *
@@ -881,11 +1227,10 @@ function triggerEnd(){
  * ------------------------------------------------------------------ */
 function collide(){
   for(const b of bergs){
-    const dx = Math.abs(st.x - b.position.x);
-    const dz = Math.abs(b.position.z);                    // ship sits at z = 0
-    const rx = SHIP_BEAM*0.45 + b.userData.r*0.72;
-    const rz = SHIP_LEN*0.44  + b.userData.r*0.72;
-    if(dx < rx && dz < rz) return true;
+    // hullR is rotation-invariant, so a spinning berg can't cheat the test
+    const pad = b.userData.hullR * 0.86;
+    if(Math.abs(st.x - b.position.x) < SHIP_BEAM*0.45 + pad &&
+       Math.abs(b.position.z)        < SHIP_LEN*0.44  + pad) return true;
   }
   return false;
 }
@@ -893,21 +1238,18 @@ function collide(){
 function update(dt){
   st.elapsed += dt;
   st.speed = BASE_SPEED + Math.min(st.elapsed*0.95, 40);
-  st.spawnInterval = Math.max(0.62, 1.5 - st.elapsed*0.011);
+  st.spawnInterval = Math.max(0.60, 1.45 - st.elapsed*0.011);
   st.scroll += st.speed * dt;
 
-  // steering: rudder angle -> lateral velocity, with yaw and heel following
   const rudder = wheelAngle / MAX_WHEEL;
-  const targetVX = rudder * 20;
-  st.vx += (targetVX - st.vx) * Math.min(1, dt*3.0);
+  st.vx += (rudder*20 - st.vx) * Math.min(1, dt*3.0);
   st.x  += st.vx * dt;
   if(st.x < -LANE_HALF){ st.x = -LANE_HALF; st.vx = 0; }
   if(st.x >  LANE_HALF){ st.x =  LANE_HALF; st.vx = 0; }
 
-  st.yaw  += ((-st.vx/20) * 0.34 - st.yaw)  * Math.min(1, dt*3.2);
-  st.lean += (( rudder    * 0.16) - st.lean) * Math.min(1, dt*2.6);
+  st.yaw  += ((-st.vx/20) * 0.30 - st.yaw)  * Math.min(1, dt*3.2);
+  st.lean += (( rudder    * 0.14) - st.lean) * Math.min(1, dt*2.6);
 
-  // bergs drift aft
   st.spawnTimer += dt;
   if(st.spawnTimer >= st.spawnInterval){ st.spawnTimer = 0; spawnBerg(); }
 
@@ -915,10 +1257,10 @@ function update(dt){
     const b = bergs[i];
     b.position.z += st.speed * dt;
     b.rotation.y += b.userData.spin * dt;
-    b.position.y = waveH(b.position.x, b.position.z - st.scroll, st.elapsed) * 0.55
-                 + Math.sin(st.elapsed*0.7 + b.userData.bobPhase) * 0.12
-                 - b.userData.r*0.10;
-    b.rotation.z = Math.sin(st.elapsed*0.6 + b.userData.bobPhase) * 0.035;
+    b.position.y = waveH(b.position.x, b.position.z - st.scroll, st.elapsed) * 0.5
+                 + Math.sin(st.elapsed*0.7 + b.userData.bobPhase) * 0.10;
+    b.rotation.z = Math.sin(st.elapsed*0.6 + b.userData.bobPhase) * 0.03;
+    b.rotation.x = Math.cos(st.elapsed*0.5 + b.userData.bobPhase) * 0.025;
 
     if(!b.userData.passed && b.position.z > SHIP_LEN*0.5){
       b.userData.passed = true;
@@ -932,10 +1274,26 @@ function update(dt){
 
   st.distance += st.speed * dt * 0.06;
 
-  // wake foam off the stern quarters
+  // bow wave — the one bit of foam the lookout can actually see
+  st.bowTimer += dt;
+  while(st.bowTimer > 0.012){
+    st.bowTimer -= 0.012;
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const stem = -SHIP_LEN*0.47;
+    emit(bowFX,
+      st.x + side*(SHIP_BEAM*0.18 + Math.random()*0.6),
+      0.25 + Math.random()*0.55,
+      stem + Math.random()*2.2,
+      side*(4.5 + Math.random()*5.0) + st.vx*0.5,
+      1.0 + Math.random()*2.2,
+      st.speed*0.30 + Math.random()*5,
+      0.8 + Math.random()*1.5);
+  }
+
+  // stern wake, for the astern view
   st.wakeTimer += dt;
-  while(st.wakeTimer > 0.018){
-    st.wakeTimer -= 0.018;
+  while(st.wakeTimer > 0.022){
+    st.wakeTimer -= 0.022;
     const side = Math.random() < 0.5 ? -1 : 1;
     emit(wakeFX,
       st.x + side*(SHIP_BEAM*0.42 + Math.random()*0.5) - st.vx*0.05,
@@ -947,15 +1305,15 @@ function update(dt){
       0.7 + Math.random()*1.1);
   }
 
-  // funnel smoke, trailing aft
+  // funnel smoke: thinner than before, and thrown aft hard so it clears fast
   st.smokeTimer += dt;
-  if(st.smokeTimer > 0.05){
+  if(st.smokeTimer > 0.075){
     st.smokeTimer = 0;
     for(const a of ship.userData.smokeAnchors){
       emit(smokeFX,
         st.x + a.x + (Math.random()-0.5)*0.4, a.y, a.z + (Math.random()-0.5)*0.4,
-        (Math.random()-0.5)*1.2, 2.2 + Math.random()*1.6, st.speed*0.42 + Math.random()*4,
-        0.9 + Math.random()*1.3);
+        (Math.random()-0.5)*1.0, 1.6 + Math.random()*1.2, st.speed*0.80 + Math.random()*6,
+        0.8 + Math.random()*1.1);
     }
   }
 
@@ -967,53 +1325,65 @@ function update(dt){
  * ------------------------------------------------------------------ */
 function poseShip(){
   const t = st.elapsed;
-  const zScroll = -st.scroll;   // world z -> wave-field z; mirrors `wp.z - uScroll` in the shader
-  const yMid   = waveH(st.x, zScroll, t);
-  const yBow   = waveH(st.x, -SHIP_LEN*0.45 + zScroll, t);
-  const yStern = waveH(st.x,  SHIP_LEN*0.45 + zScroll, t);
-  const yPort  = waveH(st.x - SHIP_BEAM*0.5, zScroll, t);
-  const yStbd  = waveH(st.x + SHIP_BEAM*0.5, zScroll, t);
+  const zs = -st.scroll;   // world z -> wave-field z; mirrors `wp.z - uScroll`
+  const yMid   = waveH(st.x, zs, t);
+  const yBow   = waveH(st.x, -SHIP_LEN*0.45 + zs, t);
+  const yStern = waveH(st.x,  SHIP_LEN*0.45 + zs, t);
+  const yPort  = waveH(st.x - SHIP_BEAM*0.5, zs, t);
+  const yStbd  = waveH(st.x + SHIP_BEAM*0.5, zs, t);
+
+  st.pitch = Math.atan2((yStern - yBow)*0.45, SHIP_LEN*0.9);
+  st.roll  = Math.atan2((yPort - yStbd)*0.45, SHIP_BEAM) + st.lean;
 
   shipRig.position.set(st.x, yMid*0.45 - 0.15, 0);
-  shipRig.rotation.set(
-    Math.atan2((yStern - yBow)*0.45, SHIP_LEN*0.9),          // pitch
-    st.yaw,
-    Math.atan2((yPort - yStbd)*0.45, SHIP_BEAM) + st.lean    // roll + heel into the turn
-  );
+  shipRig.rotation.set(st.pitch, st.yaw, st.roll);
+  shipRig.updateMatrixWorld(true);
 
   bowLamp.position.set(st.x, 5, -SHIP_LEN*0.42);
-  deckLamp.position.set(st.x, 8, SHIP_LEN*0.1);
+  nestLamp.position.set(st.x, NEST.y - 1.0, NEST.z);
 }
 
+const _nestPos = new THREE.Vector3();
+const _look = new THREE.Vector3();
+
 function poseCamera(dt){
-  // chase cam: astern, above the after funnel, looking down the ship's length
-  const desired = new THREE.Vector3(
-    st.x*0.72 + st.vx*0.18,
-    11.5 + Math.sin(st.elapsed*0.8)*0.25,
-    SHIP_LEN*0.72 + 8
-  );
-  camera.position.lerp(desired, Math.min(1, dt*2.4));
+  const mode = VIEWS[viewIndex];
+  const snap = camSettled ? Math.min(1, dt*(mode === 'nest' ? 14 : 2.4)) : 1;
+
+  if(mode === 'nest'){
+    // ride the actual barrel: inherit the ship's heave, pitch and roll
+    nestAnchor.getWorldPosition(_nestPos);
+    camera.position.lerp(_nestPos, snap);
+
+    _look.set(st.x + st.vx*0.55, 2.4, NEST.z - 90);
+    camera.lookAt(_look);
+    // partial roll — full hull roll from 90 feet up is nauseating
+    camera.rotation.z += st.roll*0.55 - st.yaw*0.10;
+  } else {
+    _look.set(st.x*0.72 + st.vx*0.18, 11.5 + Math.sin(st.elapsed*0.8)*0.25, SHIP_LEN*0.72 + 8);
+    camera.position.lerp(_look, snap);
+    _look.set(st.x*0.9 + st.vx*0.5, 3.2, -SHIP_LEN*1.1);
+    camera.lookAt(_look);
+    camera.rotation.z += st.lean*0.35 - st.yaw*0.12;
+  }
+  camSettled = true;
 
   if(st.shake > 0){
-    const k = st.shake*st.shake * 1.6;
+    const k = st.shake*st.shake * 1.5;
     camShake.set((Math.random()-0.5)*k, (Math.random()-0.5)*k, (Math.random()-0.5)*k*0.5);
     camera.position.add(camShake);
+    camera.rotation.z += (Math.random()-0.5)*st.shake*0.06;
     st.shake = Math.max(0, st.shake - dt*1.1);
   }
-
-  const look = new THREE.Vector3(st.x*0.9 + st.vx*0.5, 3.2, -SHIP_LEN*1.1);
-  camera.lookAt(look);
-  camera.rotation.z += st.lean*0.35 - st.yaw*0.12;
 }
 
 function updateAlert(){
-  // brightest when a big berg is close and near the ship's track
   let danger = 0;
   for(const b of bergs){
-    if(b.position.z > 0 || b.position.z < -230) continue;
+    if(b.position.z > 0 || b.position.z < -240) continue;
     const dx = Math.abs(st.x - b.position.x);
-    const lateral = Math.max(0, 1 - dx / (b.userData.r + SHIP_BEAM*1.4));
-    const closing = THREE.MathUtils.clamp(1 - (-b.position.z) / 230, 0, 1);
+    const lateral = Math.max(0, 1 - dx / (b.userData.hullR + SHIP_BEAM*1.4));
+    const closing = THREE.MathUtils.clamp(1 - (-b.position.z) / 240, 0, 1);
     danger = Math.max(danger, lateral * closing);
   }
   const pulse = 0.6 + 0.4*Math.sin(st.elapsed*9);
@@ -1034,17 +1404,25 @@ function loop(ts){
   if(running) update(dt);
   else        st.elapsed += dt;          // sea and sky keep breathing on the menus
 
+  stepPoints(bowFX,   dt, -3.2,  1.4, 1.05);
   stepPoints(wakeFX,  dt, -0.4,  1.1, 0.85);
-  stepPoints(smokeFX, dt,  0.9,  0.5, 0.42);
+  stepPoints(smokeFX, dt,  0.9,  0.4, 0.50);
   stepPoints(sprayFX, dt, -16.0, 0.6, 1.05);
 
   oceanUniforms.uTime.value   = st.elapsed;
   oceanUniforms.uScroll.value = st.scroll;
+  iceUniforms.uTime.value     = st.elapsed;
+  foamMat.uniforms.uTime.value = st.elapsed;
   stars.material.uniforms.uTime.value = st.elapsed;
-  stars.position.x = st.x;               // keep the sky centred on the ship
 
   poseShip();
   poseCamera(dt);
+
+  // keep the sea and sky centred on the eye so neither runs out of world
+  ocean.position.set(camera.position.x, 0, camera.position.z - 380);
+  skyDome.position.set(camera.position.x, 0, camera.position.z);
+  stars.position.set(camera.position.x, 0, camera.position.z);
+
   updateAlert();
   drawWheel();
 
@@ -1056,10 +1434,11 @@ function loop(ts){
 
 window.addEventListener('resize', resize);
 resize();
+viewName.textContent = VIEW_LABELS[VIEWS[viewIndex]];
 resetGame();
 running = false;
 poseShip();
-camera.position.set(0, 12, SHIP_LEN*0.72 + 8);
+poseCamera(1);
 requestAnimationFrame(loop);
 </script>
 </body>
