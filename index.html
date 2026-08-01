@@ -320,7 +320,7 @@
   function spawnBerg(){
     const scale = 0.55 + Math.random()*1.15;
     const w = W*0.14*scale;
-    const cx = Math.random()*(W-w*1.6)+w*0.8;
+    const cx = Math.random()*(W + w) - w*0.5;
     bergs.push({
       x: cx,
       y: -150,
@@ -641,7 +641,7 @@
 
     // shadow in water
     ctx.save();
-    ctx.globalAlpha = 0.28;
+    ctx.globalAlpha = 0.14;
     ctx.fillStyle = '#001019';
     ctx.beginPath();
     ctx.ellipse(0, b.h*0.32, b.w*0.5, b.h*0.16, 0,0,Math.PI*2);
@@ -658,17 +658,17 @@
     for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0],pts[i][1]);
     ctx.closePath();
     const g = ctx.createLinearGradient(-b.w*0.4,-b.h*0.4,b.w*0.4,b.h*0.4);
-    g.addColorStop(0,'#f5fdff');
-    g.addColorStop(0.45,'#cdeef2');
-    g.addColorStop(1,'#8fd0d8');
+    g.addColorStop(0,'#6c828c');
+    g.addColorStop(0.45,'#4a5e68');
+    g.addColorStop(1,'#26343c');
     ctx.fillStyle = g;
     ctx.fill();
-    ctx.strokeStyle = 'rgba(120,190,200,0.6)';
+    ctx.strokeStyle = 'rgba(90,130,140,0.35)';
     ctx.lineWidth = 1;
     ctx.stroke();
 
     // facets
-    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.strokeStyle = 'rgba(200,215,220,0.18)';
     ctx.beginPath();
     ctx.moveTo(0,-b.h*0.5); ctx.lineTo(b.w*0.06,b.h*0.2);
     ctx.moveTo(-b.w*0.36,-b.h*0.22); ctx.lineTo(b.w*0.06,b.h*0.2);
@@ -693,40 +693,12 @@
   function render(){
     ctx.clearRect(0,0,W,H);
 
-    let shakeX=0, shakeY=0;
-    if(shakeT>0){
-      shakeX = (Math.random()-0.5)*10*shakeT*2;
-      shakeY = (Math.random()-0.5)*10*shakeT*2;
-    }
-    ctx.save();
-    ctx.translate(shakeX, shakeY);
-
-    // sky/water gradient already via CSS bg, add moon
-    const moonX = W*0.78, moonY = H*0.1;
-    const moonGlow = ctx.createRadialGradient(moonX,moonY,2,moonX,moonY,70);
-    moonGlow.addColorStop(0,'rgba(232,238,245,0.55)');
-    moonGlow.addColorStop(1,'rgba(232,238,245,0)');
-    ctx.fillStyle = moonGlow;
-    ctx.beginPath(); ctx.arc(moonX,moonY,70,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#eef3f8';
-    ctx.beginPath(); ctx.arc(moonX,moonY,16,0,Math.PI*2); ctx.fill();
-
-    // stars
+    // moonless night — only faint starlight, no moon glow or reflection
     for(const s of stars){
-      const a = 0.4+0.4*Math.sin(elapsed*1.5+s.tw);
-      ctx.fillStyle = `rgba(232,238,245,${a})`;
+      const a = 0.25+0.25*Math.sin(elapsed*1.5+s.tw);
+      ctx.fillStyle = `rgba(200,210,222,${a})`;
       ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.fill();
     }
-
-    // moon reflection shimmer
-    ctx.save();
-    ctx.globalAlpha = 0.18;
-    ctx.fillStyle = '#dfe9f2';
-    for(let i=0;i<6;i++){
-      const yy = H*0.15 + i*14 + Math.sin(elapsed*2+i)*3;
-      ctx.fillRect(moonX-18+Math.sin(elapsed*3+i)*10, yy, 36-i*4, 2);
-    }
-    ctx.restore();
 
     for(const g of gulls) drawGull(g);
 
@@ -760,8 +732,6 @@
       ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
     }
     ctx.globalAlpha = 1;
-
-    ctx.restore();
   }
 
   function updateParticles(dt){
