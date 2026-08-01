@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>RMS TITANIC — Iceberg Run</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;700;900&family=Space+Mono:wght@400;700&display=swap');
+
+  :root{
+    --navy-deep:#060c1c;
+    --navy:#0d1b33;
+    --navy-mid:#16294a;
+    --moon:#e8eef5;
+    --ice:#aee3e8;
+    --ice-bright:#f2fbfc;
+    --brass:#c9a15a;
+    --danger:#e6484f;
+  }
+
+  *{box-sizing:border-box; -webkit-tap-highlight-color: transparent;}
+
+  html,body{
+    margin:0; padding:0; height:100%; overflow:hidden;
+    background:var(--navy-deep);
+    font-family:'Space Mono', monospace;
+    color:var(--moon);
+    touch-action:none;
+  }
+
+  #stage{
+    position:relative;
+    width:100vw; height:100vh;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:14px;
+  }
+
+  #game{
+    display:block;
+    background:linear-gradient(180deg,var(--navy-deep) 0%, var(--navy) 55%, var(--navy-mid) 100%);
+    box-shadow: 0 0 0 1px rgba(174,227,232,0.12), 0 30px 80px rgba(0,0,0,0.6);
+  }
+
+  #wheelWrap{
+    position:relative;
+    touch-action:none;
+    cursor:grab;
+    user-select:none;
+    flex-shrink:0;
+  }
+  #wheelWrap:active{ cursor:grabbing; }
+  #wheelCanvas{
+    display:block;
+  }
+  .wheel-hint{
+    position:absolute; left:50%; bottom:-18px; transform:translateX(-50%);
+    font-size:9px; letter-spacing:0.18em; text-transform:uppercase; color:var(--ice);
+    opacity:0.45; white-space:nowrap; pointer-events:none;
+  }
+
+  .hud{
+    position:absolute; top:18px; left:18px; right:18px;
+    display:flex; justify-content:space-between; align-items:flex-start;
+    pointer-events:none;
+    letter-spacing:0.12em;
+    font-size:13px;
+    color:var(--ice);
+    text-transform:uppercase;
+    z-index:5;
+  }
+  .hud .label{opacity:0.55; font-size:10px; display:block; margin-bottom:2px;}
+  .hud .value{font-size:20px; color:var(--ice-bright); font-weight:700; letter-spacing:0.04em;}
+  .hud .block{text-align:left;}
+  .hud .block.right{text-align:right;}
+
+  .overlay{
+    position:absolute; inset:0;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center;
+    background:radial-gradient(ellipse at 50% 30%, rgba(22,41,74,0.55), rgba(6,12,28,0.92) 70%);
+    z-index:10;
+    padding:24px;
+  }
+  .overlay.hidden{display:none;}
+
+  .eyebrow{
+    font-size:11px; letter-spacing:0.35em; color:var(--brass);
+    text-transform:uppercase; margin-bottom:14px;
+  }
+  h1{
+    font-family:'Playfair Display', serif;
+    font-weight:900;
+    font-size:clamp(38px, 9vw, 64px);
+    margin:0 0 6px 0;
+    color:var(--ice-bright);
+    letter-spacing:0.02em;
+    line-height:1.02;
+  }
+  .subtitle{
+    font-family:'Playfair Display', serif;
+    font-style:italic;
+    font-weight:500;
+    font-size:16px;
+    color:var(--ice);
+    opacity:0.85;
+    margin:0 0 30px 0;
+  }
+  .rule{
+    width:64px; height:1px; background:var(--brass); opacity:0.6;
+    margin:0 0 26px 0;
+  }
+  .howto{
+    font-size:12px; line-height:1.9; color:var(--moon);
+    opacity:0.75; margin-bottom:30px; max-width:340px;
+  }
+  .howto b{color:var(--ice-bright); font-weight:700;}
+
+  button.go{
+    font-family:'Space Mono', monospace;
+    font-weight:700;
+    font-size:13px;
+    letter-spacing:0.2em;
+    text-transform:uppercase;
+    background:transparent;
+    color:var(--ice-bright);
+    border:1px solid var(--ice);
+    padding:14px 34px;
+    cursor:pointer;
+    transition:all 0.25s ease;
+  }
+  button.go:hover{ background:var(--ice); color:var(--navy-deep); }
+  button.go:active{ transform:scale(0.97); }
+
+  .stat-row{
+    display:flex; gap:36px; margin-top:34px;
+  }
+  .stat{ text-align:center; }
+  .stat .n{ font-size:26px; font-weight:700; color:var(--ice-bright); font-family:'Playfair Display', serif;}
+  .stat .l{ font-size:9px; letter-spacing:0.2em; opacity:0.55; text-transform:uppercase; margin-top:4px;}
+
+  .flash{
+    color:var(--danger) !important;
+  }
+
+  @media (max-width:520px){
+    .hud{ font-size:11px; }
+    .hud .value{ font-size:16px; }
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="game"></canvas>
+
+  <div id="wheelWrap">
+    <canvas id="wheelCanvas"></canvas>
+    <div class="wheel-hint">Turn to steer</div>
+  </div>
+
+  <div class="hud">
+    <div class="block">
+      <span class="label">Nautical Miles</span>
+      <span class="value" id="scoreVal">0</span>
+    </div>
+    <div class="block right">
+      <span class="label">Best</span>
+      <span class="value" id="bestVal">0</span>
+    </div>
+  </div>
+
+  <div class="overlay" id="startOverlay">
+    <div class="eyebrow">White Star Line presents</div>
+    <h1>RMS TITANIC</h1>
+    <p class="subtitle">she is unsinkable — prove it</p>
+    <div class="rule"></div>
+    <p class="howto">
+      Steer the liner through the North Atlantic ice field.<br>
+      <b>Grab the wheel</b> below and turn it, or use <b>arrow keys / A·D</b>.<br>
+      Every berg dodged adds distance. One graze ends the voyage.
+    </p>
+    <button class="go" id="startBtn">Depart Southampton</button>
+  </div>
+
+  <div class="overlay hidden" id="endOverlay">
+    <div class="eyebrow flash">Iceberg, right ahead</div>
+    <h1 id="endTitle">She has struck.</h1>
+    <p class="subtitle" id="endSub">The unsinkable ship meets the ice.</p>
+    <div class="rule"></div>
+    <div class="stat-row">
+      <div class="stat"><div class="n" id="finalScore">0</div><div class="l">Miles Sailed</div></div>
+      <div class="stat"><div class="n" id="finalBest">0</div><div class="l">Best Voyage</div></div>
+    </div>
+    <div style="margin-top:34px;">
+      <button class="go" id="retryBtn">Set Sail Again</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const stage = document.getElementById('stage');
+  const wheelWrap = document.getElementById('wheelWrap');
+  const wheelCanvas = document.getElementById('wheelCanvas');
+  const wheelCtx = wheelCanvas.getContext('2d');
+  let wheelSize = 120;
+
+  const scoreVal = document.getElementById('scoreVal');
+  const bestVal = document.getElementById('bestVal');
+  const startOverlay = document.getElementById('startOverlay');
+  const endOverlay = document.getElementById('endOverlay');
+  const startBtn = document.getElementById('startBtn');
+  const retryBtn = document.getElementById('retryBtn');
+  const finalScore = document.getElementById('finalScore');
+  const finalBest = document.getElementById('finalBest');
+  const endTitle = document.getElementById('endTitle');
+  const endSub = document.getElementById('endSub');
+
+  let W, H, DPR;
+  function resize(){
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    const wheelReserve = 168; // space for wheel + hint + gap
+    const maxW = Math.min(window.innerWidth - 20, 480);
+    const maxH = Math.min(window.innerHeight - 20 - wheelReserve, 700);
+    // maintain portrait-ish ratio
+    let w = maxW, h = Math.min(maxH, w * 1.5);
+    if (h > maxH) { h = maxH; w = h / 1.5; }
+    W = Math.floor(w); H = Math.floor(h);
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    canvas.width = Math.floor(W * DPR);
+    canvas.height = Math.floor(H * DPR);
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+
+    wheelSize = Math.max(96, Math.min(148, W*0.4));
+    wheelWrap.style.width = wheelSize + 'px';
+    wheelWrap.style.height = wheelSize + 'px';
+    wheelCanvas.style.width = wheelSize + 'px';
+    wheelCanvas.style.height = wheelSize + 'px';
+    wheelCanvas.width = Math.floor(wheelSize * DPR);
+    wheelCanvas.height = Math.floor(wheelSize * DPR);
+    wheelCtx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  let best = 0;
+  try { best = parseInt(localStorage.getItem('titanicBest') || '0', 10) || 0; } catch(e) { best = 0; }
+  bestVal.textContent = best;
+
+  // ---- game state ----
+  let running = false;
+  let ship, bergs, gulls, stars, wake, particles;
+  let distance = 0;
+  let speed = 0;
+  let baseSpeed = 90; // px/sec world scroll
+  let spawnTimer = 0;
+  let spawnInterval = 1.0;
+  let elapsed = 0;
+  let shakeT = 0;
+  let lastTime = 0;
+  let keyLeft=false, keyRight=false;
+  let wheelAngle = 0;
+  const maxWheelAngle = Math.PI * 0.62; // ~112deg lock-to-lock feel
+  let wheelDragging = false;
+  let wheelGrabAngle = 0;
+  let wheelStartAngle = 0;
+
+  function shipWidth(){ return W*0.11; }
+  function shipHeight(){ return shipWidth()*3.1; }
+
+  function resetGame(){
+    ship = {
+      x: W/2,
+      y: H*0.78,
+      vx: 0,
+      lean:0
+    };
+    bergs = [];
+    gulls = [];
+    wake = [];
+    particles = [];
+    distance = 0;
+    speed = baseSpeed;
+    spawnTimer = 0;
+    spawnInterval = 2.6;
+    elapsed = 0;
+    shakeT = 0;
+    stars = [];
+    for(let i=0;i<50;i++){
+      stars.push({x:Math.random()*W, y:Math.random()*H*0.5, r:Math.random()*1.3+0.3, tw:Math.random()*Math.PI*2});
+    }
+    for(let i=0;i<3;i++){
+      gulls.push(spawnGull(true));
+    }
+  }
+
+  function spawnGull(initial){
+    return {
+      x: Math.random()*W,
+      y: Math.random()*H*0.25 + 10,
+      s: 6+Math.random()*4,
+      speed: 20+Math.random()*20,
+      phase: Math.random()*Math.PI*2,
+      dir: Math.random()<0.5?-1:1
+    };
+  }
+
+  function spawnBerg(){
+    const scale = 0.55 + Math.random()*1.15;
+    const w = W*0.14*scale;
+    const cx = Math.random()*(W-w*1.6)+w*0.8;
+    bergs.push({
+      x: cx,
+      y: -150,
+      w: w,
+      h: w*0.75,
+      scale: scale,
+      passed:false,
+      seed: Math.random()*1000,
+      wobble: Math.random()*Math.PI*2
+    });
+  }
+
+  // ---- input ----
+  window.addEventListener('keydown', (e)=>{
+    if(e.key==='ArrowLeft' || e.key==='a' || e.key==='A') keyLeft=true;
+    if(e.key==='ArrowRight' || e.key==='d' || e.key==='D') keyRight=true;
+    if((e.key===' ' || e.key==='Enter') && !running){
+      if(!endOverlay.classList.contains('hidden')) doStart();
+      else if(!startOverlay.classList.contains('hidden')) doStart();
+    }
+  });
+  window.addEventListener('keyup', (e)=>{
+    if(e.key==='ArrowLeft' || e.key==='a' || e.key==='A') keyLeft=false;
+    if(e.key==='ArrowRight' || e.key==='d' || e.key==='D') keyRight=false;
+  });
+
+  function angleFromWheelCenter(clientX, clientY){
+    const rect = wheelWrap.getBoundingClientRect();
+    const cx = rect.left + rect.width/2, cy = rect.top + rect.height/2;
+    return Math.atan2(clientY - cy, clientX - cx);
+  }
+
+  wheelWrap.addEventListener('pointerdown', (e)=>{
+    wheelDragging = true;
+    try{ wheelWrap.setPointerCapture(e.pointerId); }catch(err){}
+    wheelGrabAngle = angleFromWheelCenter(e.clientX, e.clientY);
+    wheelStartAngle = wheelAngle;
+  });
+  window.addEventListener('pointermove', (e)=>{
+    if(!wheelDragging) return;
+    const a = angleFromWheelCenter(e.clientX, e.clientY);
+    let delta = a - wheelGrabAngle;
+    while(delta > Math.PI) delta -= Math.PI*2;
+    while(delta < -Math.PI) delta += Math.PI*2;
+    wheelAngle = Math.max(-maxWheelAngle, Math.min(maxWheelAngle, wheelStartAngle + delta));
+  });
+  window.addEventListener('pointerup', ()=>{ wheelDragging = false; });
+  window.addEventListener('pointercancel', ()=>{ wheelDragging = false; });
+
+  function updateWheel(dt){
+    if(!wheelDragging){
+      if(keyLeft && !keyRight){
+        wheelAngle -= dt*3.4;
+      } else if(keyRight && !keyLeft){
+        wheelAngle += dt*3.4;
+      } else {
+        wheelAngle += (0 - wheelAngle) * Math.min(1, dt*4.5);
+      }
+      wheelAngle = Math.max(-maxWheelAngle, Math.min(maxWheelAngle, wheelAngle));
+    }
+  }
+
+  function drawWheel(){
+    const s = wheelSize;
+    wheelCtx.clearRect(0,0,s,s);
+
+    wheelCtx.save();
+    wheelCtx.translate(s/2, s/2);
+    wheelCtx.rotate(wheelAngle);
+
+    const R = s*0.44;
+
+    // outer rim
+    wheelCtx.beginPath();
+    wheelCtx.arc(0,0,R,0,Math.PI*2);
+    wheelCtx.lineWidth = s*0.09;
+    const rimGrad = wheelCtx.createLinearGradient(-R,-R,R,R);
+    rimGrad.addColorStop(0,'#93602c');
+    rimGrad.addColorStop(0.5,'#d9a25a');
+    rimGrad.addColorStop(1,'#6e4520');
+    wheelCtx.strokeStyle = rimGrad;
+    wheelCtx.stroke();
+    wheelCtx.lineWidth = s*0.09*0.32;
+    wheelCtx.strokeStyle = 'rgba(0,0,0,0.25)';
+    wheelCtx.stroke();
+
+    // spokes + capstan handles
+    const spokes = 8;
+    for(let i=0;i<spokes;i++){
+      const a = (i/spokes)*Math.PI*2;
+      wheelCtx.save();
+      wheelCtx.rotate(a);
+      wheelCtx.beginPath();
+      wheelCtx.moveTo(0, -s*0.1);
+      wheelCtx.lineTo(0, -R);
+      wheelCtx.lineWidth = s*0.05;
+      wheelCtx.lineCap = 'round';
+      wheelCtx.strokeStyle = '#b5824a';
+      wheelCtx.stroke();
+      // handle knob
+      wheelCtx.beginPath();
+      wheelCtx.arc(0, -R - s*0.02, s*0.055, 0, Math.PI*2);
+      wheelCtx.fillStyle = '#2c1a0d';
+      wheelCtx.fill();
+      wheelCtx.strokeStyle = 'rgba(0,0,0,0.4)';
+      wheelCtx.lineWidth = 1;
+      wheelCtx.stroke();
+      wheelCtx.restore();
+    }
+
+    // hub
+    wheelCtx.beginPath();
+    wheelCtx.arc(0,0,s*0.13,0,Math.PI*2);
+    const hubGrad = wheelCtx.createRadialGradient(-s*0.04,-s*0.04,1,0,0,s*0.13);
+    hubGrad.addColorStop(0,'#f0cd8a');
+    hubGrad.addColorStop(1,'#a3752f');
+    wheelCtx.fillStyle = hubGrad;
+    wheelCtx.fill();
+    wheelCtx.strokeStyle = 'rgba(0,0,0,0.45)';
+    wheelCtx.lineWidth = 1.5;
+    wheelCtx.stroke();
+
+    wheelCtx.restore();
+
+    // static top reference notch (does not rotate)
+    wheelCtx.save();
+    wheelCtx.strokeStyle = 'rgba(232,238,245,0.55)';
+    wheelCtx.lineWidth = 2;
+    wheelCtx.beginPath();
+    wheelCtx.moveTo(s/2, s*0.03);
+    wheelCtx.lineTo(s/2, s*0.1);
+    wheelCtx.stroke();
+    wheelCtx.restore();
+  }
+
+  // ---- collision ----
+  function collide(){
+    const sw = shipWidth()*0.5;
+    const sh = shipHeight()*0.5;
+    const sBoxW = sw*0.55, sBoxH = sh*0.72;
+    for(const b of bergs){
+      const dx = Math.abs(ship.x - b.x);
+      const dy = Math.abs((ship.y-sh*0.15) - b.y);
+      const rx = sBoxW + b.w*0.34;
+      const ry = sBoxH + b.h*0.34;
+      if(dx < rx && dy < ry){
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // ---- update ----
+  function update(dt){
+    elapsed += dt;
+    // difficulty ramp
+    speed = baseSpeed + Math.min(elapsed*3.2, 130);
+    spawnInterval = Math.max(1.4, 2.6 - elapsed*0.012);
+
+    // steering — driven by the wheel's rudder angle
+    const maxV = W*0.95;
+    const targetVX = (wheelAngle/maxWheelAngle) * maxV;
+    ship.vx += (targetVX - ship.vx) * Math.min(1, dt*4.5);
+    ship.x += ship.vx*dt;
+    const margin = shipWidth()*0.42;
+    if(ship.x < margin){ ship.x = margin; ship.vx=0; }
+    if(ship.x > W-margin){ ship.x = W-margin; ship.vx=0; }
+    ship.lean += ((wheelAngle/maxWheelAngle)*0.3 - ship.lean)*Math.min(1,dt*5);
+
+    // wake trail
+    wake.push({x:ship.x, y:ship.y+shipHeight()*0.42, life:1, w: shipWidth()*0.5});
+    for(const w of wake){ w.life -= dt*0.55; w.y += speed*dt*0.9; }
+    wake = wake.filter(w=>w.life>0);
+
+    // bergs
+    spawnTimer += dt;
+    if(spawnTimer >= spawnInterval){
+      spawnTimer = 0;
+      spawnBerg();
+    }
+    for(const b of bergs){
+      b.y += speed*dt*(0.85+ (b.scale*0.15));
+      b.wobble += dt;
+      if(!b.passed && b.y > ship.y+shipHeight()*0.5){
+        b.passed = true;
+        distance += 1;
+      }
+    }
+    bergs = bergs.filter(b=> b.y < H+120);
+
+    for(const g of gulls){
+      g.x += Math.sin(elapsed*0.6+g.phase)*g.speed*dt*0.6 + g.dir*8*dt;
+      g.y += Math.cos(elapsed*0.5+g.phase)*3*dt;
+      if(g.x<-20) g.x = W+20;
+      if(g.x>W+20) g.x = -20;
+    }
+
+    if(shakeT>0) shakeT -= dt;
+
+    distance += speed*dt*0.02;
+
+    if(collide()){
+      triggerEnd();
+    }
+  }
+
+  function triggerEnd(){
+    running = false;
+    shakeT = 0.5;
+    // splash particles
+    for(let i=0;i<40;i++){
+      particles.push({
+        x: ship.x, y: ship.y,
+        vx: (Math.random()-0.5)*260,
+        vy: (Math.random()-0.9)*220,
+        life: 1,
+        r: 2+Math.random()*3
+      });
+    }
+    const finalMiles = Math.floor(distance);
+    if(finalMiles > best){
+      best = finalMiles;
+      try{ localStorage.setItem('titanicBest', String(best)); }catch(e){}
+    }
+    setTimeout(()=>{
+      finalScore.textContent = finalMiles;
+      finalBest.textContent = best;
+      bestVal.textContent = best;
+      const near = finalMiles < 8;
+      endTitle.textContent = near ? "She never left the dock." : "She has struck.";
+      endSub.textContent = near ? "A shorter voyage than most." : "The unsinkable ship meets the ice, at "+finalMiles+" miles.";
+      endOverlay.classList.remove('hidden');
+    }, 550);
+  }
+
+  // ---- draw ----
+  function drawShip(){
+    const sw = shipWidth(), sh = shipHeight();
+    ctx.save();
+    ctx.translate(ship.x, ship.y);
+    ctx.rotate(ship.lean*0.5);
+
+    // hull shadow
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = '#000814';
+    ctx.beginPath();
+    ctx.ellipse(0, sh*0.42, sw*0.55, sw*0.22, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+
+    // hull (top-down elongated shape)
+    ctx.beginPath();
+    ctx.moveTo(0, -sh*0.5);
+    ctx.bezierCurveTo(sw*0.42, -sh*0.4, sw*0.46, sh*0.1, sw*0.34, sh*0.34);
+    ctx.bezierCurveTo(sw*0.26, sh*0.48, -sw*0.26, sh*0.48, -sw*0.34, sh*0.34);
+    ctx.bezierCurveTo(-sw*0.46, sh*0.1, -sw*0.42, -sh*0.4, 0, -sh*0.5);
+    ctx.closePath();
+    const hullGrad = ctx.createLinearGradient(-sw*0.4,0,sw*0.4,0);
+    hullGrad.addColorStop(0,'#0a1730');
+    hullGrad.addColorStop(0.5,'#1b3153');
+    hullGrad.addColorStop(1,'#0a1730');
+    ctx.fillStyle = hullGrad;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(200,220,235,0.35)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // deck centerline
+    ctx.strokeStyle = 'rgba(200,220,235,0.18)';
+    ctx.beginPath();
+    ctx.moveTo(0,-sh*0.46); ctx.lineTo(0, sh*0.42);
+    ctx.stroke();
+
+    // funnels
+    ctx.fillStyle = '#c9645a';
+    const funnelY = [-sh*0.24, -sh*0.06, sh*0.12, sh*0.30];
+    for(const fy of funnelY){
+      ctx.beginPath();
+      ctx.roundRect ? ctx.roundRect(-sw*0.065, fy-sh*0.05, sw*0.13, sh*0.1, 2) : ctx.rect(-sw*0.065, fy-sh*0.05, sw*0.13, sh*0.1);
+      ctx.fill();
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(-sw*0.065, fy-sh*0.05, sw*0.13, sh*0.018);
+      ctx.fillStyle = '#c9645a';
+    }
+
+    // bow highlight
+    ctx.fillStyle = 'rgba(230,240,248,0.5)';
+    ctx.beginPath();
+    ctx.ellipse(0,-sh*0.4, sw*0.05, sh*0.06,0,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawWarningArrow(x, alpha){
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(x, 22);
+    ctx.shadowColor = '#e6484f';
+    ctx.shadowBlur = 10;
+    ctx.fillStyle = '#e6484f';
+    ctx.beginPath();
+    ctx.moveTo(-10,-7);
+    ctx.lineTo(0,7);
+    ctx.lineTo(10,-7);
+    ctx.lineTo(0,-1.5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawBerg(b){
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    const wob = Math.sin(b.wobble*1.2+b.seed)*2;
+    ctx.rotate(wob*0.01);
+
+    // shadow in water
+    ctx.save();
+    ctx.globalAlpha = 0.28;
+    ctx.fillStyle = '#001019';
+    ctx.beginPath();
+    ctx.ellipse(0, b.h*0.32, b.w*0.5, b.h*0.16, 0,0,Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+
+    const pts = [
+      [0,-b.h*0.5],[b.w*0.32,-b.h*0.28],[b.w*0.46,b.h*0.05],
+      [b.w*0.26,b.h*0.34],[-b.w*0.12,b.h*0.42],[-b.w*0.42,b.h*0.12],
+      [-b.w*0.36,-b.h*0.22]
+    ];
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0],pts[0][1]);
+    for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0],pts[i][1]);
+    ctx.closePath();
+    const g = ctx.createLinearGradient(-b.w*0.4,-b.h*0.4,b.w*0.4,b.h*0.4);
+    g.addColorStop(0,'#f5fdff');
+    g.addColorStop(0.45,'#cdeef2');
+    g.addColorStop(1,'#8fd0d8');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(120,190,200,0.6)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // facets
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.beginPath();
+    ctx.moveTo(0,-b.h*0.5); ctx.lineTo(b.w*0.06,b.h*0.2);
+    ct
