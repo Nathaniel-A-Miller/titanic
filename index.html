@@ -1343,32 +1343,37 @@ function poseShip(){
   nestLamp.position.set(st.x, NEST.y - 1.0, NEST.z);
 }
 
-const _nestPos = new THREE.Vector3();
-const _chasePos = new THREE.Vector3(); // Add this line
-const _look = new THREE.Vector3();
+const _nestPos  = new THREE.Vector3();
+const _nestQuat = new THREE.Quaternion();
+const _nestFwd  = new THREE.Vector3();
+const _look     = new THREE.Vector3();
+const _chasePos = new THREE.Vector3();
 
 function poseCamera(mode) {
   // Common lerp/snap factor
   const snap = 0.08;
 
   if (mode === 'nest') {
-    // 1. Position camera inside the crow's nest
-    _nestPos.set(st.x, NEST.y - 0.15, NEST.z);
-    camera.position.lerp(_nestPos, snap);
+    // 1. Read the crow's nest's ACTUAL world position + orientation off the
+    //    mast (nestAnchor is a child of `ship`, which sits inside `shipRig`
+    //    with the live heave/pitch/roll/yaw applied). This is what keeps the
+    //    camera physically locked to the barrel through every wave, instead
+    //    of an approximation that can drift loose and "swivel" on its own.
+    nestAnchor.getWorldPosition(_nestPos);
+    nestAnchor.getWorldQuaternion(_nestQuat);
 
-    // 2. Look forward along the ship's yaw direction instead of world-space velocity
-    const lookDist = 90;
-    _look.set(
-      st.x - Math.sin(st.yaw) * lookDist,
-      2.4,
-      NEST.z - Math.cos(st.yaw) * lookDist
-    );
+    camera.position.lerp(_nestPos, snap);
+    camera.position.y -= 0.15; // eye height, just below the barrel's rim
+
+    // 2. Look forward along the mast's real bow direction (hull-local -Z),
+    //    so pitch and roll naturally carry through to the view instead of
+    //    being bolted on afterward.
+    _nestFwd.set(0, 0, -1).applyQuaternion(_nestQuat);
+    _look.copy(_nestPos).addScaledVector(_nestFwd, 90);
+    _look.y = _nestPos.y - 4; // a lookout scans the sea ahead, not the horizon dead level
     camera.lookAt(_look);
 
-    // 3. Subtle bank roll linked to lean
-    camera.rotation.z += st.lean * 0.2;
-
-  } else if (mode === 'chase') {
+  } else if (mode === 'astern') {
     // Standard third-person chase camera logic
     _chasePos.set(st.x * 0.4, 8, NEST.z + 25);
     camera.position.lerp(_chasePos, snap);
@@ -1439,7 +1444,7 @@ viewName.textContent = VIEW_LABELS[VIEWS[viewIndex]];
 resetGame();
 running = false;
 poseShip();
-poseCamera(1);
+poseCamera(VIEWS[viewIndex]);
 requestAnimationFrame(loop);
 </script>
 </body>
