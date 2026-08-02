@@ -1344,6 +1344,7 @@ function poseShip(){
 }
 
 const _nestPos = new THREE.Vector3();
+const _chasePos = new THREE.Vector3(); // Add this line
 const _look = new THREE.Vector3();
 
 function poseCamera(mode) {
@@ -1416,7 +1417,7 @@ function loop(ts){
   stars.material.uniforms.uTime.value = st.elapsed;
 
   poseShip();
-  poseCamera(dt);
+  poseCamera(VIEWS[viewIndex]);
 
   // keep the sea and sky centred on the eye so neither runs out of world
   ocean.position.set(camera.position.x, 0, camera.position.z - 380);
