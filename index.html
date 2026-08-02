@@ -1530,7 +1530,7 @@ function poseCamera(mode) {
     // camera swinging into/through the barrel wall. Match it exactly;
     // poseShip()'s rotational inertia is what keeps the motion calm now.
     camera.position.copy(_nestPos);
-    camera.position.y -= 0.15; // eye height, just below the barrel's rim
+    camera.position.y += 0.35; // eye height, well clear of the barrel's rim (rim top sits at NEST.y-0.22)
     camera.quaternion.copy(_nestQuat);
 
     // 2. Look forward along the mast's real bow direction (hull-local -Z),
