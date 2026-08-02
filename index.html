@@ -50,7 +50,7 @@
   }
 
   .hud{
-    position:absolute; top:18px; left:18px; right:18px;
+    position:absolute; top:56px; left:18px; right:18px;
     display:flex; justify-content:space-between; align-items:flex-start;
     pointer-events:none;
     letter-spacing:0.12em;
@@ -64,6 +64,33 @@
   .hud .block{text-align:left;}
   .hud .block.center{text-align:center;}
   .hud .block.right{text-align:right;}
+
+  /* thin voyage-progress bar: Southampton -> New York */
+  #voyageBar{
+    position:absolute; top:18px; left:18px; right:18px;
+    z-index:5; pointer-events:none;
+    display:flex; align-items:center; gap:10px;
+  }
+  #voyageBar .port-name{
+    font-size:9px; letter-spacing:0.16em; text-transform:uppercase;
+    color:var(--ice); opacity:0.6; white-space:nowrap; flex:0 0 auto;
+  }
+  #voyageBar .bar-track{
+    position:relative; flex:1 1 auto; height:3px; border-radius:2px;
+    background:rgba(174,227,232,0.18);
+  }
+  #voyageBar .bar-fill{
+    position:absolute; left:0; top:0; bottom:0; width:0%;
+    border-radius:2px;
+    background:var(--brass);
+    transition:width 0.2s linear;
+  }
+  #voyageBar .bar-ship{
+    position:absolute; top:50%; left:0%; transform:translate(-50%,-50%);
+    font-size:13px; color:var(--ice-bright);
+    filter:drop-shadow(0 0 3px rgba(0,0,0,0.8));
+    transition:left 0.2s linear;
+  }
 
   /* view-mode chip, bottom left */
   #viewChip{
@@ -154,6 +181,7 @@
     .hud{ font-size:11px; }
     .hud .value{ font-size:16px; }
     #viewChip{ display:none; }
+    #voyageBar .port-name{ display:none; }
   }
 </style>
 </head>
@@ -165,6 +193,15 @@
   <div id="wheelWrap">
     <canvas id="wheelCanvas"></canvas>
     <div class="wheel-hint">Turn to steer</div>
+  </div>
+
+  <div id="voyageBar">
+    <span class="port-name left">Southampton</span>
+    <div class="bar-track">
+      <div class="bar-fill" id="voyageFill"></div>
+      <div class="bar-ship" id="voyageShip">⛴</div>
+    </div>
+    <span class="port-name right">New York</span>
   </div>
 
   <div class="hud">
@@ -192,14 +229,15 @@
     <p class="howto">
       You are the lookout in the crow's nest, ninety feet up her foremast.<br>
       <b>Grab the wheel</b> below and turn it, or use <b>arrow keys / A·D</b>.<br>
-      Every berg dodged adds distance. One graze ends the voyage.<br>
+      Stay between the red and green buoys. One graze on a berg ends the voyage —<br>
+      make it to New York and she's home free.<br>
       <span style="opacity:0.6">Press <kbd>C</kbd> for the view from astern.</span>
     </p>
     <button class="go" id="startBtn">Depart Southampton</button>
   </div>
 
   <div class="overlay hidden" id="endOverlay">
-    <div class="eyebrow flash">Iceberg, right ahead</div>
+    <div class="eyebrow flash" id="endEyebrow">Iceberg, right ahead</div>
     <h1 id="endTitle">She has struck.</h1>
     <p class="subtitle" id="endSub">The unsinkable ship meets the ice.</p>
     <div class="rule"></div>
@@ -249,10 +287,13 @@ const startBtn     = document.getElementById('startBtn');
 const retryBtn     = document.getElementById('retryBtn');
 const finalScore   = document.getElementById('finalScore');
 const finalBest    = document.getElementById('finalBest');
+const endEyebrow   = document.getElementById('endEyebrow');
 const endTitle     = document.getElementById('endTitle');
 const endSub       = document.getElementById('endSub');
 const vignette     = document.getElementById('alertVignette');
 const viewName     = document.getElementById('viewName');
+const voyageFill   = document.getElementById('voyageFill');
+const voyageShip   = document.getElementById('voyageShip');
 
 /* ------------------------------------------------------------------ *
  *  Constants
@@ -954,6 +995,64 @@ function releaseBerg(g){
 }
 
 /* ------------------------------------------------------------------ *
+ *  Corridor buoys — mark the lane the ship is actually allowed to
+ *  wander within (±LANE_HALF), so there's a visible line to steer by
+ *  besides "don't hit the white shapes".
+ * ------------------------------------------------------------------ */
+const BUOY_SPACING = 55; // world units between buoy pairs down the corridor
+const buoyMatPort = new THREE.MeshStandardMaterial({ color:0xb43a3a, roughness:0.55 }); // red, port side
+const buoyMatStbd = new THREE.MeshStandardMaterial({ color:0x2e8b57, roughness:0.55 }); // green, starboard side
+const buoyLampMat = new THREE.MeshStandardMaterial({ color:0xffe3ae, emissive:0xffc46a, emissiveIntensity:1.4, roughness:0.4 });
+const BUOY_BODY_GEO = new THREE.CylinderGeometry(0.16, 0.22, 1.1, 8);
+const BUOY_CONE_GEO = new THREE.ConeGeometry(0.22, 0.5, 8);
+const BUOY_LAMP_GEO = new THREE.SphereGeometry(0.09, 8, 8);
+
+const buoys = [];
+const buoyPool = [];
+
+function acquireBuoy(side){
+  const mat = side < 0 ? buoyMatPort : buoyMatStbd;
+  if(buoyPool.length){
+    const g = buoyPool.pop();
+    g.userData.body.material = mat;
+    g.userData.cone.material = mat;
+    g.userData.side = side;
+    return g;
+  }
+  const grp = new THREE.Group();
+  const body = new THREE.Mesh(BUOY_BODY_GEO, mat);
+  body.position.y = 0.35;
+  const cone = new THREE.Mesh(BUOY_CONE_GEO, mat);
+  cone.position.y = 1.1;
+  const lamp = new THREE.Mesh(BUOY_LAMP_GEO, buoyLampMat);
+  lamp.position.y = 1.42;
+  const foam = new THREE.Mesh(FOAM_GEO, foamMat);
+  foam.scale.setScalar(0.55);
+  foam.position.y = 0.04;
+  grp.add(body, cone, lamp, foam);
+  grp.userData.body = body;
+  grp.userData.cone = cone;
+  grp.userData.side = side;
+  scene.add(grp);
+  return grp;
+}
+
+function spawnBuoyPair(){
+  for(const side of [-1, 1]){
+    const g = acquireBuoy(side);
+    g.position.set(side * LANE_HALF, 0, SPAWN_Z + 40 - Math.random()*10);
+    g.visible = true;
+    g.userData.bobPhase = Math.random()*Math.PI*2;
+    buoys.push(g);
+  }
+}
+
+function releaseBuoy(g){
+  g.visible = false;
+  buoyPool.push(g);
+}
+
+/* ------------------------------------------------------------------ *
  *  Particle systems: bow wave, wake foam, funnel smoke, impact spray
  * ------------------------------------------------------------------ */
 function makePoints(count, color, size, blending, opacity){
@@ -1160,20 +1259,22 @@ bestVal.textContent = best;
 const st = {
   x:0, vx:0, lean:0, yaw:0, pitch:0, roll:0,
   distance:0, speed:0, elapsed:0,
-  spawnTimer:0, spawnInterval:2.6,
+  spawnTimer:0, spawnInterval:2.6, buoyDist:0,
   shake:0, scroll:0, smokeTimer:0, wakeTimer:0, bowTimer:0
 };
 const BASE_SPEED = 26;
+const TOTAL_MILES = 1000; // Southampton to New York, this voyage's length
 
 function resetGame(){
   st.x = 0; st.vx = 0; st.lean = 0; st.yaw = 0; st.pitch = 0; st.roll = 0;
   st.distance = 0; st.speed = BASE_SPEED; st.elapsed = 0;
-  st.spawnTimer = 0; st.spawnInterval = 2.6;
+  st.spawnTimer = 0; st.spawnInterval = 2.6; st.buoyDist = 0;
   st.shake = 0; st.scroll = 0;
   st.smokeTimer = 0; st.wakeTimer = 0; st.bowTimer = 0;
   wheelAngle = 0;
 
   while(bergs.length) releaseBerg(bergs.pop());
+  while(buoys.length) releaseBuoy(buoys.pop());
   for(const fx of [bowFX, wakeFX, smokeFX, sprayFX]){
     for(let i=0;i<fx.count;i++){ fx.data[i].life = 0; fx.alp[i] = 0; }
   }
@@ -1181,6 +1282,12 @@ function resetGame(){
   for(let i=0;i<6;i++){
     spawnBerg();
     bergs[bergs.length-1].position.z = -140 - i*62;
+  }
+  for(let i=0;i<5;i++){
+    spawnBuoyPair();
+    const z = -60 - i*BUOY_SPACING;
+    buoys[buoys.length-1].position.z = z;
+    buoys[buoys.length-2].position.z = z;
   }
 }
 
@@ -1213,11 +1320,42 @@ function triggerEnd(){
     finalScore.textContent = miles;
     finalBest.textContent = best;
     bestVal.textContent = best;
+    endEyebrow.classList.add('flash');
+    endEyebrow.textContent = 'Iceberg, right ahead';
     const short = miles < 8;
     endTitle.textContent = short ? 'She never left the dock.' : 'She has struck.';
     endSub.textContent = short
       ? 'A shorter voyage than most.'
       : 'The unsinkable ship meets the ice, at ' + miles + ' miles.';
+    endOverlay.classList.remove('hidden');
+  }, 950);
+}
+
+function triggerWin(){
+  running = false;
+  st.shake = 0.4;
+
+  // a burst off the bow to mark landfall, in place of the impact spray
+  for(let i=0;i<110;i++){
+    emit(sprayFX,
+      st.x + (Math.random()-0.5)*5, 3.0 + Math.random()*2.0, -SHIP_LEN*0.5 + (Math.random()-0.5)*5,
+      (Math.random()-0.5)*10, 9 + Math.random()*14, (Math.random()-0.5)*10,
+      0.4 + Math.random()*0.9);
+  }
+
+  const miles = Math.min(TOTAL_MILES, Math.floor(st.distance));
+  if(miles > best){
+    best = miles;
+    try { localStorage.setItem('titanicBest', String(best)); } catch(_) {}
+  }
+  setTimeout(() => {
+    finalScore.textContent = miles;
+    finalBest.textContent = best;
+    bestVal.textContent = best;
+    endEyebrow.classList.remove('flash');
+    endEyebrow.textContent = 'White Star Line';
+    endTitle.textContent = 'Land ahoy — New York.';
+    endSub.textContent = 'She has crossed safe into harbor, ' + miles + ' miles.';
     endOverlay.classList.remove('hidden');
   }, 950);
 }
@@ -1274,6 +1412,23 @@ function update(dt){
 
   st.distance += st.speed * dt * 0.06;
 
+  st.buoyDist += st.speed * dt;
+  if(st.buoyDist >= BUOY_SPACING){ st.buoyDist -= BUOY_SPACING; spawnBuoyPair(); }
+
+  for(let i=buoys.length-1;i>=0;i--){
+    const b = buoys[i];
+    b.position.z += st.speed * dt;
+    b.position.y = waveH(b.position.x, b.position.z - st.scroll, st.elapsed) * 0.5
+                 + Math.sin(st.elapsed*1.1 + b.userData.bobPhase) * 0.08;
+    b.rotation.z = Math.sin(st.elapsed*0.8 + b.userData.bobPhase) * 0.10 * -b.userData.side;
+    b.rotation.x = Math.cos(st.elapsed*0.7 + b.userData.bobPhase) * 0.06;
+
+    if(b.position.z > DESPAWN_Z){
+      releaseBuoy(b);
+      buoys.splice(i, 1);
+    }
+  }
+
   // bow wave — the one bit of foam the lookout can actually see
   st.bowTimer += dt;
   while(st.bowTimer > 0.012){
@@ -1318,12 +1473,13 @@ function update(dt){
   }
 
   if(collide()) triggerEnd();
+  else if(st.distance >= TOTAL_MILES) triggerWin();
 }
 
 /* ------------------------------------------------------------------ *
  *  Presentation
  * ------------------------------------------------------------------ */
-function poseShip(){
+function poseShip(dt){
   const t = st.elapsed;
   const zs = -st.scroll;   // world z -> wave-field z; mirrors `wp.z - uScroll`
   const yMid   = waveH(st.x, zs, t);
@@ -1332,8 +1488,16 @@ function poseShip(){
   const yPort  = waveH(st.x - SHIP_BEAM*0.5, zs, t);
   const yStbd  = waveH(st.x + SHIP_BEAM*0.5, zs, t);
 
-  st.pitch = Math.atan2((yStern - yBow)*0.45, SHIP_LEN*0.9);
-  st.roll  = Math.atan2((yPort - yStbd)*0.45, SHIP_BEAM) + st.lean;
+  const rawPitch = Math.atan2((yStern - yBow)*0.45, SHIP_LEN*0.9);
+  const rawRoll  = Math.atan2((yPort - yStbd)*0.45, SHIP_BEAM) + st.lean;
+
+  // A real hull has rotational inertia — it doesn't snap to the wave's
+  // instantaneous slope, it eases toward it. Without this the mast (9.6m
+  // up, so any hull roll is hugely amplified there) whips hard enough
+  // every frame to throw the crow's-nest camera around.
+  const rot_k = Math.min(1, dt*2.0);
+  st.pitch += (rawPitch - st.pitch) * rot_k;
+  st.roll  += (rawRoll  - st.roll)  * rot_k;
 
   shipRig.position.set(st.x, yMid*0.45 - 0.15, 0);
   shipRig.rotation.set(st.pitch, st.yaw, st.roll);
@@ -1356,14 +1520,18 @@ function poseCamera(mode) {
   if (mode === 'nest') {
     // 1. Read the crow's nest's ACTUAL world position + orientation off the
     //    mast (nestAnchor is a child of `ship`, which sits inside `shipRig`
-    //    with the live heave/pitch/roll/yaw applied). This is what keeps the
-    //    camera physically locked to the barrel through every wave, instead
-    //    of an approximation that can drift loose and "swivel" on its own.
+    //    with the live heave/pitch/roll/yaw applied).
     nestAnchor.getWorldPosition(_nestPos);
     nestAnchor.getWorldQuaternion(_nestQuat);
 
-    camera.position.lerp(_nestPos, snap);
+    // No lerp here on purpose: the barrel mesh itself has zero lag (it's a
+    // rigid child of the same shipRig), so smoothing the camera toward it
+    // makes the two drift apart frame to frame — which looks like the
+    // camera swinging into/through the barrel wall. Match it exactly;
+    // poseShip()'s rotational inertia is what keeps the motion calm now.
+    camera.position.copy(_nestPos);
     camera.position.y -= 0.15; // eye height, just below the barrel's rim
+    camera.quaternion.copy(_nestQuat);
 
     // 2. Look forward along the mast's real bow direction (hull-local -Z),
     //    so pitch and roll naturally carry through to the view instead of
@@ -1421,7 +1589,7 @@ function loop(ts){
   foamMat.uniforms.uTime.value = st.elapsed;
   stars.material.uniforms.uTime.value = st.elapsed;
 
-  poseShip();
+  poseShip(dt);
   poseCamera(VIEWS[viewIndex]);
 
   // keep the sea and sky centred on the eye so neither runs out of world
@@ -1435,6 +1603,10 @@ function loop(ts){
   scoreVal.textContent = Math.floor(st.distance);
   knotsVal.textContent = running ? Math.round(st.speed*0.85) : 0;
 
+  const pct = THREE.MathUtils.clamp(st.distance / TOTAL_MILES, 0, 1) * 100;
+  voyageFill.style.width = pct + '%';
+  voyageShip.style.left  = pct + '%';
+
   renderer.render(scene, camera);
 }
 
@@ -1443,7 +1615,7 @@ resize();
 viewName.textContent = VIEW_LABELS[VIEWS[viewIndex]];
 resetGame();
 running = false;
-poseShip();
+poseShip(1);
 poseCamera(VIEWS[viewIndex]);
 requestAnimationFrame(loop);
 </script>
